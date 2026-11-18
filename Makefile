@@ -1,12 +1,15 @@
 # Trading-R1: development entrypoints. `make help` lists targets.
 .DEFAULT_GOAL := help
-.PHONY: help dev lint smoke
+.PHONY: help dev test lint smoke
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/' | sort
 
 dev:  ## run the service with auto-reload
 	uv run trading-r1 serve --reload
+
+test:  ## run offline unit tests
+	uv run --locked python -m unittest discover -s tests
 
 lint:  ## ruff and Biome
 	uv run ruff check .

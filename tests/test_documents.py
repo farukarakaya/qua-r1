@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import base64
 import io
 import json
@@ -152,6 +154,24 @@ class TestDocuments(unittest.TestCase):
         payload = json.loads(request.content)
         self.assertEqual(payload["model"], "env-model")
         self.assertEqual(payload["max_output_tokens"], 12345)
+
+    def test_custom_endpoint_requires_its_own_key_before_upload(self):
+        self._mock_openai(lambda: _response(_PAGES))
+        with (
+            patch.dict(os.environ, {"TR1_GPT_OCR_BASE_URL": "https://ocr.example/v1"}),
+            self.assertRaisesRegex(documents.DocumentError, "TR1_GPT_OCR_API_KEY"),
+        ):
+            documents.add_pdf(self.pdf)
+        self.assertEqual(self.requests, [])
+
+    def test_config_validation_does_not_print_credentials(self):
+        secret = "private-test-value"
+        config = {"profiles": {"gpt-ocr": {"api_key": secret}}}
+        (self.home / "providers.json").write_text(json.dumps(config), encoding="utf-8")
+        with redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(cli.main(["add", str(self.pdf)]), 1)
+        self.assertIn("api_key", stderr.getvalue())
+        self.assertNotIn(secret, stderr.getvalue())
 
     def test_missing_key_is_reported_before_upload(self):
         with (

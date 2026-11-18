@@ -48,7 +48,9 @@ trading-r1 docs add ~/Downloads/report.pdf ~/Downloads/another-report.pdf
 using the dedicated `gpt-ocr` profile. That profile defaults to OpenAI and `gpt-4.1-mini`;
 it does not use your selected chat or web reader model. `--model` overrides the OCR model for
 this import. To configure it persistently, edit `profiles.gpt-ocr` in `providers.json` or set
-`TR1_GPT_OCR_MODEL`. Only import documents you can share with the OCR endpoint. Each input
+`TR1_GPT_OCR_MODEL`. If you set `TR1_GPT_OCR_BASE_URL` to another endpoint, supply its own
+`TR1_GPT_OCR_API_KEY`; the default OpenAI key is not forwarded. Only import documents you
+can share with the OCR endpoint. Each input
 must fit the 20 MiB limit and the model's input and output limits.
 
 The command prints the path to `~/.trading-r1/docs/<sha256>.json` (under `TR1_HOME` if set). The JSON

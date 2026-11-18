@@ -23,6 +23,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: uv python install ${{ matrix.python }}
       - run: uv sync --locked
+      - run: make test
       - run: make lint
       - run: make smoke
       - run: uv tool install . && trading-r1 --version

@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from trading_r1.providers.builtins import builtin_profiles, supplied_provider
 from trading_r1.state import credentials
@@ -208,8 +208,12 @@ def load_profiles(
             spec = {**spec, "api_key_env": "OPENAI_API_KEY"}  # no address: it is OpenAI's own
         try:
             profiles[name] = ModelProfile(**spec)
-        except ValueError as err:  # pydantic's validation error
-            raise ProfileSelectionError(f"profile {name!r} is invalid: {err}") from err
+        except ValidationError as err:
+            # Profile input may contain credentials. Report field names, never their values.
+            fields = [".".join(map(str, item["loc"])) for item in err.errors(include_input=False)]
+            raise ProfileSelectionError(
+                f"profile {name!r}: invalid field(s): {', '.join(fields)}"
+            ) from None
     return profiles
 
 

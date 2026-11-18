@@ -89,6 +89,14 @@ def _ocr_profile(model: str | None) -> ModelProfile:
         raise DocumentError(
             f"{PDF_OCR_PROFILE} requires the openai-responses provider and ocr role"
         )
+    if not profile.base_url:
+        raise DocumentError(f"{PDF_OCR_PROFILE} requires an explicit base_url")
+    if (
+        profile.base_url.rstrip("/") != "https://api.openai.com/v1"
+        and not profile.api_key_literal
+        and profile.api_key_env in (None, "OPENAI_API_KEY")
+    ):
+        raise DocumentError("set TR1_GPT_OCR_API_KEY for a custom OCR endpoint")
     if not profile.resolve_api_key():
         key_env = profile.api_key_env or "OPENAI_API_KEY"
         raise DocumentError(f"set {key_env} with `trading-r1 secrets set {key_env}`")
