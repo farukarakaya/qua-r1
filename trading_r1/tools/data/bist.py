@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared Borsa İstanbul routing and optional borsapy adapter."""
+"""Shared Borsa İstanbul routing and borsapy adapter."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ async def run[T](subject: str, dataset: str, fetch: Callable[[Any], T]) -> T:
             import borsapy
         except ImportError:
             raise ToolError(
-                "BIST data requires the 'bist' extra: uv run --locked --extra bist trading-r1."
+                "Could not import borsapy. Reinstall the backend dependencies."
             ) from None
         try:
             return fetch(borsapy)

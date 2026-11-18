@@ -241,7 +241,7 @@ class BistMarketTests(unittest.IsolatedAsyncioTestCase):
                 self.subTest(tool=tool.SPEC.name),
                 patch.dict(sys.modules, {"borsapy": None}),
                 patch.object(tool, "Tauric", side_effect=AssertionError("unexpected Tauric call")),
-                self.assertRaisesRegex(ToolError, "'bist' extra"),
+                self.assertRaisesRegex(ToolError, "Could not import borsapy"),
             ):
                 await tool.SPEC.handler(req)
 

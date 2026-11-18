@@ -110,9 +110,9 @@ questions, model requests and responses and tool results, are copied to your acc
 
 ## Borsa İstanbul market data
 
-From a source checkout, launch with `uv run --locked --extra bist trading-r1`. This uses
+From a source checkout, launch with `uv run trading-r1`. This uses
 our pinned borsapy build with reporting-group cache keys and Istanbul corporate-action dates.
-The public PyPI borsapy build is not supported for this extra. Ask for `XIST:THYAO` or
+The public PyPI borsapy build is not supported for this adapter. Ask for `XIST:THYAO` or
 `THYAO.IS` in the price tools. borsapy uses TradingView for daily OHLCV in TRY, excluding
 the current Istanbul calendar date. Weekly
 and monthly bars are resampled; intraday bars are not available. Stock closes are split-adjusted
@@ -141,7 +141,7 @@ Convert to a common currency before optimizing.
 ### Use IstFin alongside borsapy
 
 Launch the backend with `ISTFIN_API_KEY` set. From a source checkout with a private `.env`
-file, use `uv run --locked --env-file .env --extra bist trading-r1`. If the terminal
+file, use `uv run --env-file .env trading-r1`. If the terminal
 attaches to an existing backend, set the key on that backend instead (or use
 `trading-r1 secrets set ISTFIN_API_KEY`). Open the `/` palette and choose **New session with
 IstFin**. The `/research` API equivalent is a fresh `session_id` starting with `istfin-`.

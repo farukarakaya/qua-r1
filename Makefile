@@ -8,8 +8,8 @@ help:  ## list targets
 dev:  ## run the service with auto-reload
 	uv run trading-r1 serve --reload
 
-test:  ## run offline tests, including the optional BIST adapter
-	uv run --locked --extra bist python -m unittest discover -s tests
+test:  ## run offline tests, including the BIST adapter
+	uv run --locked python -m unittest discover -s tests
 
 lint:  ## ruff and Biome
 	uv run ruff check .
