@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -20,10 +21,11 @@ from pydantic import BaseModel, Field
 from trading_r1.providers.discovery import with_context_window
 from trading_r1.report import render_html, snapshot_from_session
 from trading_r1.runtime.context_budget import compact_at, estimate_tokens, window_of
-from trading_r1.runtime.session import recorder
+from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX, recorder
 from trading_r1.runtime.session.store import SESSION_ID_PATTERN
 from trading_r1.runtime.summarize import summarize_history
 from trading_r1.service import preferences, state
+from trading_r1.state.credentials import overlay
 
 _LOG = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,6 +64,13 @@ async def compact(req: CompactRequest) -> Any:
                 state.SESSIONS.compact, req.session_id, new_history, stats, trigger="user"
             )
         return stats
+
+
+@router.post("/sessions")
+def new_session() -> dict[str, str]:
+    """Choose the chat's privacy policy before its first turn can be enrolled for sync."""
+    prefix = ISTFIN_SESSION_PREFIX if overlay().get("ISTFIN_API_KEY", "").strip() else ""
+    return {"id": f"{prefix}{uuid.uuid4()}"}
 
 
 @router.get("/sessions")

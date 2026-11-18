@@ -4,7 +4,6 @@ import datetime as dt
 import json
 import sys
 import unittest
-from importlib.util import find_spec
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -15,7 +14,6 @@ from trading_r1.tools.data.equity import EQUITY_DATA_SPECS, fundamentals
 from trading_r1.tools.data.market import bist_data
 
 
-@unittest.skipUnless(find_spec("borsapy"), "requires the bist extra")
 class BistProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_financial_formats_do_not_share_cached_rows(self) -> None:
         from borsapy._providers.isyatirim import IsYatirimProvider

@@ -110,9 +110,9 @@ questions, model requests and responses and tool results, are copied to your acc
 
 ## Borsa İstanbul market data
 
-From a source checkout, launch with `uv run --locked --extra bist trading-r1`. This uses
+From a source checkout, launch with `uv run trading-r1`. This uses
 our pinned borsapy build with reporting-group cache keys and Istanbul corporate-action dates.
-The public PyPI borsapy build is not supported for this extra. Ask for `XIST:THYAO` or
+The public PyPI borsapy build is not supported for this adapter. Ask for `XIST:THYAO` or
 `THYAO.IS` in the price tools. borsapy uses TradingView for daily OHLCV in TRY, excluding
 the current Istanbul calendar date. Weekly
 and monthly bars are resampled; intraday bars are not available. Stock closes are split-adjusted
@@ -140,12 +140,13 @@ Convert to a common currency before optimizing.
 
 ### Use IstFin alongside borsapy
 
-Launch the backend with `ISTFIN_API_KEY` set. From a source checkout with a private `.env`
-file, use `uv run --locked --env-file .env --extra bist trading-r1`. If the terminal
-attaches to an existing backend, set the key on that backend instead (or use
-`trading-r1 secrets set ISTFIN_API_KEY`). Open the `/` palette and choose **New session with
-IstFin**. The `/research` API equivalent is a fresh `session_id` starting with `istfin-`.
-Ordinary sessions, scheduled jobs and Telegram turns do not get these tools.
+Set `ISTFIN_API_KEY` on the backend (or use `uv run trading-r1 secrets set ISTFIN_API_KEY`),
+then launch the terminal with `uv run trading-r1` and ask your question. New ordinary chats
+include IstFin alongside borsapy and Tauric when the key is configured. These chats have
+archive sync off from the first turn, even if you never call IstFin.
+Without a key, new chats keep the usual settings. Resuming a chat preserves its original policy.
+PDF sessions, scheduled jobs and Telegram turns do not gain IstFin tools.
+API clients can `POST /sessions` and pass the returned `id` to `/research` for the same default.
 
 | Tool | Example request | What it returns |
 |---|---|---|
@@ -159,7 +160,9 @@ its historical bars can be unadjusted across bonus issues. borsapy still serves 
 history and structured corporate actions. Failed requests do not switch providers.
 
 Use an IstFin session for personal research only. The selected model receives the data it
-reads; the session is logged locally but is not synced to Tauric or given shared memory.
+reads; the session is logged locally but is not synced to Tauric. Like other chats, it can
+read and save personal preferences in shared notes. Keep market data out of those notes.
+Settings > Remembered notes lets you view or delete notes, not turn memory on or off.
 Do not share licensed data in exported reports or channels. See [IstFin's terms](https://api.istfin.com/yasal/kullanim-kosullari).
 
 ## Your data and keys

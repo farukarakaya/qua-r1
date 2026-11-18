@@ -1942,6 +1942,7 @@ version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "borsapy" },
     { name = "cronsim" },
     { name = "ddgs" },
     { name = "fastapi" },
@@ -1960,11 +1961,6 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
-[package.optional-dependencies]
-bist = [
-    { name = "borsapy" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "ruff" },
@@ -1973,7 +1969,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=2.4.0" },
-    { name = "borsapy", marker = "extra == 'bist'", git = "https://github.com/farukarakaya/borsapy.git?rev=a7078e15691a30f61b023037b9dedf06e90e9315" },
+    { name = "borsapy", git = "https://github.com/farukarakaya/borsapy.git?rev=a7078e15691a30f61b023037b9dedf06e90e9315" },
     { name = "cronsim", specifier = ">=2.7" },
     { name = "ddgs", specifier = ">=9.16.1" },
     { name = "fastapi", specifier = ">=0.162.0" },
@@ -1991,7 +1987,6 @@ requires-dist = [
     { name = "trafilatura", specifier = ">=2.3.1" },
     { name = "uvicorn", specifier = ">=0.54.0" },
 ]
-provides-extras = ["bist"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ruff", specifier = ">=0.17.3" }]
