@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, FiniteFloat
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 from trading_r1.contract.spec import Output, Provenance, Result, ToolError, ToolSpec, hint
 from trading_r1.tools.data import bist
@@ -42,6 +42,8 @@ _NOTES = {
 
 
 class BistDataRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     dataset: Literal[
         "profile",
         "isin",
@@ -66,9 +68,7 @@ class BistDataRequest(BaseModel):
     cadence: Literal["annual", "quarterly"] = "annual"
     financial_group: Literal["XI_29", "UFRS"] | None = None
     periods: int = Field(4, ge=1, le=20, description="Number of financial statement periods.")
-    limit: int = Field(
-        20, ge=1, le=250, description="Maximum rows other than statement line items."
-    )
+    limit: int = Field(20, ge=1, le=250, description="Maximum rows for list datasets.")
     disclosure_id: int | None = Field(None, gt=0, description="Numeric ID from a KAP article URL.")
     sector: str | None = Field(None, max_length=80, description="Optional screener sector filter.")
     index: Symbol | None = Field(None, description="Screener index code, e.g. XIST:XU100.")
@@ -130,20 +130,12 @@ def _fetch(bp: Any, req: BistDataRequest, ticker: str | None) -> tuple[list[dict
             return _rows(bp.Index(ticker).info), bist.SOURCE
         return _rows(bp.Ticker(ticker).info.todict()), "borsapy BIST profile"
 
-    stock = bp.Ticker(ticker)
-    if dataset in _STATEMENTS:
-        method = getattr(stock, _STATEMENTS[dataset])
-        return _rows(
-            method(
-                quarterly=req.cadence == "quarterly",
-                financial_group=req.financial_group,
-                last_n=req.periods,
-            )
-        ), _IS
     if dataset == "disclosure":
+        from borsapy._providers.kap import get_kap_provider
         from bs4 import BeautifulSoup
 
-        html = stock.get_news_content(req.disclosure_id)
+        # KAP disclosures are keyed by ID, not by company ticker.
+        html = get_kap_provider().get_disclosure_content(req.disclosure_id)
         if not html:
             return [], _KAP
         page = BeautifulSoup(html, "html.parser")
@@ -158,38 +150,59 @@ def _fetch(bp: Any, req: BistDataRequest, ticker: str | None) -> tuple[list[dict
                 "truncated": len(text) > 12000,
             }
         ], _KAP
+    stock = bp.Ticker(ticker)
+    if dataset in _STATEMENTS:
+        method = getattr(stock, _STATEMENTS[dataset])
+        return _rows(
+            method(
+                quarterly=req.cadence == "quarterly",
+                financial_group=req.financial_group,
+                last_n=req.periods,
+            )
+        ), _IS
     prop, source = _PROPERTIES[dataset]
     data = getattr(stock, prop)
     return _rows({"isin": data} if dataset == "isin" else data, req.limit), source
 
 
 async def _handler(req: BistDataRequest) -> Result:
+    dataset = req.dataset
+    allowed = {"dataset"}
+    needs_symbol = dataset not in {"companies", "indices", "screener", "disclosure"}
+    if needs_symbol:
+        allowed.add("symbol")
+    if dataset in _STATEMENTS:
+        allowed.update(("cadence", "financial_group", "periods"))
+    elif dataset == "disclosure":
+        allowed.add("disclosure_id")
+    elif dataset not in {"profile", "isin"}:
+        allowed.add("limit")
+    if dataset == "screener":
+        allowed.update(("sector", "index", "pe_max", "dividend_yield_min"))
+    if unused := sorted(req.model_fields_set - allowed):
+        raise ToolError(f"{dataset} does not support: {', '.join(unused)}.")
+
     ticker = bist.bist_ticker(req.symbol) if req.symbol else None
-    if not ticker and (req.symbol or req.dataset not in {"companies", "indices", "screener"}):
+    if needs_symbol and not ticker:
         raise ToolError("Use a qualified BIST symbol such as XIST:THYAO or THYAO.IS.")
-    if req.dataset == "disclosure" and req.disclosure_id is None:
+    if dataset == "disclosure" and req.disclosure_id is None:
         raise ToolError("Provide a numeric KAP disclosure_id from data.market.news.")
-    if req.dataset == "cash_flow" and req.financial_group == "UFRS":
+    if dataset == "cash_flow" and req.financial_group == "UFRS":
         raise ToolError("The İş Yatırım bank format does not provide cash flow via borsapy.")
     subject = f"XIST:{ticker}" if ticker else "BIST"
-    rows, source = await bist.run(subject, req.dataset, lambda bp: _fetch(bp, req, ticker))
+    if dataset == "disclosure":
+        subject = f"KAP {req.disclosure_id}"
+    rows, source = await bist.run(subject, dataset, lambda bp: _fetch(bp, req, ticker))
     if not rows:
-        raise ToolError(f"No {req.dataset} available from {source} for {subject}.")
+        raise ToolError(f"No {dataset} available from {source} for {subject}.")
     notes = []
-    if req.dataset in _STATEMENTS:
+    if dataset in _STATEMENTS:
         notes.append("Native İş Yatırım line items and reporting periods; not normalized SEC data.")
-    if note := _NOTES.get(req.dataset):
+    if note := _NOTES.get(dataset):
         notes.append(note)
-    disclosure = req.dataset == "disclosure"
     return Result(
-        BistDataOutput(
-            dataset=req.dataset, symbol=None if disclosure else subject, rows=rows, notes=notes
-        ),
-        Provenance(
-            source=source,
-            subject=f"KAP {req.disclosure_id}" if disclosure else subject,
-            view=req.dataset,
-        ),
+        BistDataOutput(dataset=dataset, symbol=subject if ticker else None, rows=rows, notes=notes),
+        Provenance(source=source, subject=subject, view=dataset),
     )
 
 
@@ -201,7 +214,8 @@ SPEC = ToolSpec(
     description=(
         "BIST financial statements, corporate actions, profile, ownership, analyst targets, "
         "KAP filing calendar, disclosure text, index members and screening via borsapy. "
-        "Use XIST:THYAO or THYAO.IS for companies and XIST:XU100 for indices. "
+        "Use XIST:THYAO or THYAO.IS for a company and XIST:XU100 for an index. "
+        "For disclosure text, pass disclosure_id without a symbol. "
         "Use data.market.news for recent KAP disclosures and data.market.prices for OHLCV. "
         "Statements preserve native line items; use financial_group=UFRS for banks. "
         "Use both dividends and capital_changes for corporate actions. "

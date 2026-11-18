@@ -68,11 +68,10 @@ _DESCRIPTION = (
     "prev:<id>.periods_per_year), beta (closes=prev:<id>.columns[0], benchmark_closes="
     "prev:<id>.columns[1]; `columns` follows the order of `symbols`, which also serves "
     "symbols with dots, like BRK.B). Bars a symbol has that another lacks (weekends for crypto, "
-    "holidays, dates before a listing) are dropped and counted. For BIST (XIST:THYAO or "
-    "THYAO.IS), use daily bars; if any symbol fails, the BIST basket fails. Otherwise a symbol "
-    "the provider cannot serve is reported and left out. Matching dates are not simultaneous "
-    "closes (BTC's day ends at "
-    "midnight UTC; an FX value is the day's open snapshot), each series is in its own currency, "
+    "holidays, dates before a listing) are dropped and counted. If any symbol cannot be fetched, "
+    "the whole basket fails. Use daily bars for BIST (XIST:THYAO or THYAO.IS). "
+    "Matching dates are not simultaneous closes (BTC's day ends at midnight UTC; an FX value "
+    "is the day's open snapshot), each series is in its own currency, "
     "and history is as deep as the shallowest symbol."
 )
 
@@ -114,7 +113,6 @@ class AlignedPricesOutput(Output):
     end: Day
     periods_per_year: Number
     per_symbol: dict[str, SymbolStats]
-    failed: dict[str, Text] = {}  # left out, and why
     notes: list[Text] = []
     dates: Annotated[list[Day], hint(hidden=True)]
     series: Annotated[dict[str, list[Price]], hint(hidden=True)]
@@ -165,18 +163,18 @@ async def _handler(req: AlignedPricesRequest) -> Result:
         *(fetch_bars(sym, req.period, req.interval, req.start, req.end) for sym in req.symbols),
         return_exceptions=True,
     )
-    failed = {
-        sym: str(r) for sym, r in zip(req.symbols, results, strict=True) if isinstance(r, ToolError)
-    }
-    for r in results:
-        if isinstance(r, BaseException) and not isinstance(r, ToolError):
-            raise r  # not a data problem: let it surface
-    if bist_tickers and failed:
-        raise ToolError("Could not align the full BIST basket: " + "; ".join(failed.values()))
-    fetched = {sym: r for sym, r in zip(req.symbols, results, strict=True) if sym not in failed}
-    if len(fetched) < 2:
-        raise ToolError("fewer than two symbols could be fetched: " + "; ".join(failed.values()))
-    symbols = list(fetched)
+    failures = []
+    fetched = {}
+    for symbol, result in zip(req.symbols, results, strict=True):
+        if isinstance(result, ToolError):
+            failures.append(f"{symbol}: {result}")
+        elif isinstance(result, BaseException):
+            raise result  # not a data problem: let it surface
+        else:
+            fetched[symbol] = result
+    if failures:
+        raise ToolError("Could not align the full basket: " + "; ".join(failures))
+    symbols = req.symbols
     intraday = req.interval in INTRADAY
     classes = {
         sym: asset_class_for(b.instrument.kind if b.instrument else None) or EQUITY
@@ -216,7 +214,6 @@ async def _handler(req: AlignedPricesRequest) -> Result:
         end=dates[-1],
         periods_per_year=per_year,
         per_symbol=stats,
-        failed=failed,
         notes=list(notes),
         dates=dates,
         series=series,

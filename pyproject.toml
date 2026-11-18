@@ -37,7 +37,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bist = ["borsapy==0.11.0"]
+bist = ["borsapy==0.11.0+qua.2"]
+
+[tool.uv.sources]
+borsapy = { git = "https://github.com/farukarakaya/borsapy.git", rev = "a7078e15691a30f61b023037b9dedf06e90e9315" }
 
 [project.urls]
 Homepage = "https://github.com/TauricResearch/Trading-R1"

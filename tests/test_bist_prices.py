@@ -55,6 +55,33 @@ class BistPriceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ToolError, "could not fetch history for XIST:THYAO"):
                 await pricing.fetch_bars("THYAO.IS", "5d", "1d")
 
+    async def test_history_excludes_istanbul_today_and_caps_lookback(self) -> None:
+        class FixedClock(dt.datetime):
+            @classmethod
+            def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
+                now = cls(2024, 6, 3, 22, 30, tzinfo=dt.UTC)
+                return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+        today = dt.date(2024, 6, 4)  # Already June 4 in Istanbul, but June 3 in UTC.
+        first = today - dt.timedelta(days=4999)
+        dates = (first - dt.timedelta(days=1), first, dt.date(2024, 6, 3), today)
+        frame = MagicMock(empty=False)
+        frame.__getitem__.return_value.itertuples.return_value = [
+            (dt.datetime.combine(day, dt.time()), 10, 12, 9, 11, 100) for day in dates
+        ]
+        history = Mock(return_value=frame)
+        ticker = Mock(return_value=SimpleNamespace(history=history))
+        with (
+            patch.object(pricing.dt, "datetime", FixedClock),
+            patch.dict(sys.modules, {"borsapy": SimpleNamespace(Ticker=ticker, indices=list)}),
+        ):
+            result = await prices.SPEC.handler(
+                prices.MarketPricesRequest(symbol="THYAO.IS", period="max")
+            )
+        self.assertEqual(result.output.dates, [first.isoformat(), "2024-06-03"])
+        self.assertEqual(history.call_args.kwargs["start"], first.isoformat())
+        self.assertEqual(history.call_args.kwargs["end"], "2024-06-03")
+
     async def test_index_history_uses_index_not_ticker(self) -> None:
         index = Mock()
         frame = MagicMock(empty=False)
@@ -90,30 +117,55 @@ class BistPriceTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_mixed_basket_preserves_sources_and_currencies(self) -> None:
-        rows = [{"date": "2024-06-03", "close": 100}, {"date": "2024-06-04", "close": 110}]
+        us = [
+            {"date": "2024-06-03", "close": 100},
+            {"date": "2024-06-04", "close": 110},
+            {"date": "2024-06-06", "close": 120},
+        ]
+        bist_rows = [
+            {"date": "2024-06-04", "close": 300},
+            {"date": "2024-06-05", "close": 990},
+            {"date": "2024-06-06", "close": 330},
+        ]
         with patch.object(aligned_prices, "fetch_bars") as fetch:
             fetch.side_effect = [
-                pricing.Bars(rows, currency="USD", price_basis="split_dividend_adjusted"),
+                pricing.Bars(us, currency="USD", price_basis="split_dividend_adjusted"),
                 pricing.Bars(
-                    rows, currency="TRY", price_basis="split_adjusted", source=bist.SOURCE
+                    bist_rows, currency="TRY", price_basis="split_adjusted", source=bist.SOURCE
                 ),
             ]
             req = aligned_prices.AlignedPricesRequest(symbols=["AAPL", "THYAO.IS"])
             result = await aligned_prices.SPEC.handler(req)
         stats = result.payload["per_symbol"]
-        self.assertEqual(result.payload["dates"], ["2024-06-03", "2024-06-04"])
-        self.assertEqual(stats["AAPL"]["source"], "Tauric")
+        self.assertEqual(result.payload["dates"], ["2024-06-04", "2024-06-06"])
+        self.assertEqual(result.payload["series"], {"AAPL": [110, 120], "THYAO.IS": [300, 330]})
+        self.assertEqual((stats["AAPL"]["source"], stats["AAPL"]["currency"]), ("Tauric", "USD"))
         self.assertEqual(stats["THYAO.IS"]["source"], bist.SOURCE)
         self.assertEqual(stats["THYAO.IS"]["currency"], "TRY")
         self.assertEqual(stats["THYAO.IS"]["price_basis"], "split_adjusted")
 
-    async def test_bist_baskets_reject_aliases_and_provider_failures(self) -> None:
-        with patch.object(aligned_prices, "fetch_bars", new_callable=AsyncMock) as fetch:
+    async def test_bist_baskets_reject_aliases_before_fetching(self) -> None:
+        with patch.object(aligned_prices, "fetch_bars") as fetch:
             req = aligned_prices.AlignedPricesRequest(symbols=["XIST:THYAO", "THYAO.IS"])
             with self.assertRaisesRegex(ToolError, "only one spelling"):
                 await aligned_prices.SPEC.handler(req)
             fetch.assert_not_called()
-            req = aligned_prices.AlignedPricesRequest(symbols=["AAPL", "MSFT", "THYAO.IS"])
-            fetch.side_effect = [pricing.Bars([]), pricing.Bars([]), ToolError("feed unavailable")]
-            with self.assertRaisesRegex(ToolError, "full BIST basket: feed unavailable"):
+
+    async def test_basket_fails_if_any_requested_symbol_fails(self) -> None:
+        rows = [{"date": "2024-06-03", "close": 100}, {"date": "2024-06-04", "close": 110}]
+        for symbol in ("MSFT", "THYAO.IS"):
+            with (
+                self.subTest(symbol=symbol),
+                patch.object(
+                    aligned_prices,
+                    "fetch_bars",
+                    side_effect=[
+                        pricing.Bars(rows),
+                        pricing.Bars(rows),
+                        ToolError("feed unavailable"),
+                    ],
+                ),
+                self.assertRaisesRegex(ToolError, f"full basket: {symbol}: feed unavailable"),
+            ):
+                req = aligned_prices.AlignedPricesRequest(symbols=["AAPL", "NVDA", symbol])
                 await aligned_prices.SPEC.handler(req)
