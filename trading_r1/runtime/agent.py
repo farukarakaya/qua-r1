@@ -140,11 +140,13 @@ class Agent:
         *,
         on_event: EventCallback | None = None,
         history: list[dict[str, Any]] | None = None,
+        reference_data: str = "",
     ) -> dict[str, Any]:
         """Run the loop to completion and return the trajectory dict.
 
         ``history`` is prior-turn messages (system already stripped) threaded before the new
-        question, for multi-turn sessions."""
+        question, for multi-turn sessions. ``reference_data`` is untrusted context for
+        this turn only, not part of the question saved in conversation history."""
         emit = on_event or (lambda _k, _d: None)
         session_state = ToolSessionState(evidence=self.evidence, run=uuid.uuid4().hex[:8])
         if (bound := recorder.current()) is not None:
@@ -173,12 +175,12 @@ class Agent:
             delivery=self._delivery,
         )
         limits = self.config.limits
+        user_message = {
+            "role": "user",
+            "content": f"{question}\n\n{reference_data}" if reference_data else question,
+        }
         state = RunState(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                *(history or []),
-                {"role": "user", "content": question},
-            ],
+            messages=[{"role": "system", "content": system_prompt}, *(history or []), user_message],
             wrap_up_at=asyncio.get_running_loop().time() + wrap_up_offset(limits),
             evidence_from=len(self.evidence),
             turn_from=1 + len(history or []),
@@ -211,6 +213,7 @@ class Agent:
                 "narrower question or a more capable backbone."
             )
 
+        user_message["content"] = question
         return self._build_result(
             question, state, elapsed_s=round(time.monotonic() - started, 3), usage=usage, emit=emit
         )

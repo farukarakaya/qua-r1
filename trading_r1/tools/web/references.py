@@ -64,9 +64,10 @@ def format_bibliography(entries: list[Any]) -> str:
     for c in entries:
         title = getattr(c, "title", None) or getattr(c, "url", "") or "(untitled)"
         url = getattr(c, "url", "")
-        lines.append(
-            f"- [{c.index}] [{_link_text(title)}]({url})" if url else f"- [{c.index}] {title}"
-        )
+        title = _link_text(title)
+        if url and not url.startswith("urn:"):
+            title = f"[{title}]({url})"
+        lines.append(f"- [{c.index}] {title}")
     return "\n".join(lines)
 
 

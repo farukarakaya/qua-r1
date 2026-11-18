@@ -160,7 +160,8 @@ class ResearchRequest(BaseModel):
     session_id: str | None = Field(
         None,
         pattern=f"^{SESSION_ID_PATTERN}$",
-        description="Thread this turn into a multi-turn session (omit for a sessionless run).",
+        description="Thread this turn into a session. Use a new ID starting with docs- to include "
+        "imported reports in a session that is not synced. Omit for a sessionless run.",
     )
 
 

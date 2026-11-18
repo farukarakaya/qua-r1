@@ -78,7 +78,10 @@ class ReportSnapshot:
         the disclaimer."""
         parts = [self.answer.rstrip()]
         if self.sources:
-            refs = "\n".join(f"- [{s.index}] [{s.title}]({s.url})" for s in self.sources)
+            refs = "\n".join(
+                f"- [{s.index}] " + (f"[{s.title}]({s.url})" if s.url else s.title)
+                for s in self.sources
+            )
             parts.append(f"## References\n\n{refs}")
         if self.data:
             rows = "\n".join(

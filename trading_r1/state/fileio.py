@@ -47,7 +47,7 @@ class PrivateFileError(Exception):
     """A file that must be the owner's own private file is not, or does not parse."""
 
 
-def read_private_json(path: Path, *, max_bytes: int = 1_000_000) -> Any:
+def read_private_json(path: Path, *, max_bytes: int | None = 1_000_000) -> Any:
     """The JSON in the owner's own private regular file, or ``MISSING`` when there is no such file
     (a file that holds `null` is not missing).
 
@@ -68,7 +68,7 @@ def read_private_json(path: Path, *, max_bytes: int = 1_000_000) -> Any:
         if info.st_mode & 0o077:
             raise PrivateFileError(f"{path} is open to other users; run: chmod 600 {path}")
         try:
-            return json.loads(fh.read(max_bytes).decode("utf-8"))
+            return json.loads(fh.read(-1 if max_bytes is None else max_bytes).decode("utf-8"))
         except ValueError as err:
             raise PrivateFileError(f"{path} is not valid JSON; fix or remove it") from err
 

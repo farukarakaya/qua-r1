@@ -17,6 +17,7 @@ from trading_r1.research import run_logged
 from trading_r1.runtime.auto_compact import compact_before_turn
 from trading_r1.service import preferences, state
 from trading_r1.service.events import SSE_VERSION
+from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX, catalog_context
 from trading_r1.state.runtime_config import runtime_config
 
 _LOG = logging.getLogger(__name__)
@@ -36,6 +37,8 @@ async def session_turn(
     one left, so a session runs one at a time."""
     async with state.session_lock(session_id):
         config = preferences.run_config()
+        use_documents = session_id.startswith(DOCUMENT_SESSION_PREFIX)
+        document_context = await asyncio.to_thread(catalog_context) if use_documents else ""
         # a dead local backend fails here in seconds, not after compaction's retries
         if run_kw.get("client") is None and profile.reader_profile:
             await ensure_local_ready(profile, get_profile(profile.reader_profile))
@@ -48,7 +51,9 @@ async def session_turn(
                     profile=await with_context_window(profile),
                     config=config,
                     emit=on_event or (lambda _kind, _data: None),
-                    overhead=await asyncio.to_thread(state.prompt_overhead_of, session_id, mode),
+                    overhead=await asyncio.to_thread(
+                        state.prompt_overhead_of, session_id, mode, document_context
+                    ),
                 )
         except TimeoutError:  # the turn goes on with the context it has
             _LOG.warning("compacting %s took too long; the turn goes on", session_id)
@@ -69,6 +74,7 @@ async def session_turn(
                 run=run,
                 memory=state.MEMORY,
                 config=config,
+                document_context=document_context,
                 **run_kw,
             )
         finally:

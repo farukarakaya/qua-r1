@@ -73,12 +73,17 @@ import { runQuestionnaire } from "./ui/questionnaire"
 
 type View = "welcome" | "research"
 
+// Reserved by the backend for sessions that can read PDFs and are not synced.
+const DOCUMENT_SESSION_PREFIX = "docs-"
+
 function AppInner() {
   const dialog = useDialog()
   const renderer = useRenderer()
   const [view, setView] = createSignal<View>("welcome")
   const [turns, setTurns] = createSignal<Turn[]>([])
   const [running, setRunning] = createSignal(false)
+  const [sessionId, setSessionId] = createSignal<string>()
+  const documentSession = () => sessionId()?.startsWith(DOCUMENT_SESSION_PREFIX) ?? false
   const [syncStatus, setSyncStatus] = createSignal<SyncStatus | null>(null)
   // Launch overrides the CLI passes via env for `trading-r1 --profile/--mode`.
   const launchEnv = typeof process !== "undefined" ? process.env : ({} as Record<string, string | undefined>)
@@ -113,7 +118,7 @@ function AppInner() {
     // No session yet: the server returns what the first request will carry, and the real window,
     // so the rail meter shows from the start.
     try {
-      setUsage(await getStatus(sessionId, activeProfile()))
+      setUsage(await getStatus(sessionId(), activeProfile()))
     } catch {
       /* meter is best-effort */
     }
@@ -129,7 +134,6 @@ function AppInner() {
   }
   let composerInput: TextareaRenderable | undefined
   let scroller: ScrollBoxRenderable | undefined
-  let sessionId: string | undefined
   let abort: AbortController | undefined // aborts the in-flight run (esc to cancel)
   const inputHistory = new InputHistory() // shell-style Up/Down prompt recall
 
@@ -213,12 +217,35 @@ function AppInner() {
     if (seed) void ask(seed) // run the seed now that a backbone is selected (or the server defaults)
   }
 
-  function newResearch() {
+  function newResearch(documents = false) {
     if (running()) return
     setTurns([])
     inputHistory.load([]) // input recall is per-session: a new session starts empty
-    sessionId = undefined
+    setSessionId(documents ? `${DOCUMENT_SESSION_PREFIX}${crypto.randomUUID()}` : undefined)
     setView("welcome")
+    void refreshUsage()
+  }
+
+  function newDocumentResearch() {
+    dialog.show(() => (
+      <ListDialog
+        title="New session with PDFs"
+        options={[
+          { name: "Cancel", description: "Keep the current session", value: "cancel" },
+          {
+            name: "Use imported reports",
+            description: "Share summaries and read pages with the selected model. No session sync.",
+            value: "enable",
+          },
+        ]}
+        width={layout.width.lg}
+        onCancel={() => dialog.close()}
+        onSelect={(choice) => {
+          dialog.close()
+          if (choice === "enable") newResearch(true)
+        }}
+      />
+    ))
   }
 
   async function quit() {
@@ -282,20 +309,21 @@ function AppInner() {
 
   // /export: the report as a page (html), as markdown, and the full trajectory (json), to cwd.
   function exportRun() {
-    if (!lastTurn()?.trajectory || !sessionId)
-      return info("Export report", ["No answered turn to export yet."])
-    setup.exportReport(sessionId)
+    const id = sessionId()
+    if (!lastTurn()?.trajectory || !id) return info("Export report", ["No answered turn to export yet."])
+    setup.exportReport(id)
   }
 
   // Send report: the last answer through the channels the owner picks.
   function sendRun() {
-    if (!lastTurn()?.trajectory || !sessionId) return info("Send report", ["No answered turn yet."])
-    void setup.sendReport(sessionId)
+    const id = sessionId()
+    if (!lastTurn()?.trajectory || !id) return info("Send report", ["No answered turn yet."])
+    void setup.sendReport(id)
   }
 
   // Session status: the model and the context usage of the active session.
   function showStatus() {
-    return load("Session status", getStatus(sessionId, activeProfile()), (st) =>
+    return load("Session status", getStatus(sessionId(), activeProfile()), (st) =>
       info("Session status", [
         `Model:    ${backbone()?.model ?? st.model}`,
         `Context:  ${st.used_pct}%  (${tokensK(st.tokens_used)} / ${tokensK(st.context_window)})`,
@@ -407,7 +435,8 @@ function AppInner() {
   // /compact: summarize older turns server-side, freeing context.
   function runCompact() {
     if (running()) return // don't compact a session mid-turn (matches newResearch/sessions)
-    if (!sessionId) return
+    const id = sessionId()
+    if (!id) return
     dialog.show(() => (
       <PromptDialog
         title="Compact context"
@@ -426,7 +455,7 @@ function AppInner() {
           ])
           setRunning(true) // block a racing research turn while we compact
           try {
-            const r = await compact(sessionId!, instruction || undefined, activeProfile())
+            const r = await compact(id, instruction || undefined, activeProfile())
             const text = r.compacted
               ? `Compacted context: ${tokensK(r.tokens_before ?? 0)} to ${tokensK(r.tokens_after ?? 0)} tokens`
               : `Nothing to compact${r.reason ? `: ${r.reason}` : ""}`
@@ -458,7 +487,7 @@ function AppInner() {
       return info("Resume session", ["No saved sessions yet.", "Ask a question to start one."])
     const options: ListOption[] = sessions.map((s) => ({
       name: `${syncGlyph(s.sync)} ${s.title}`,
-      description: `${s.turns} turn${s.turns === 1 ? "" : "s"}, ${day(s.updated_at)}`,
+      description: `${s.turns} turn${s.turns === 1 ? "" : "s"}, ${day(s.updated_at)}${s.id.startsWith(DOCUMENT_SESSION_PREFIX) ? ", PDFs on" : ""}`,
       value: s.id,
     }))
     dialog.show(() => (
@@ -469,7 +498,7 @@ function AppInner() {
         onSelect={(id) => {
           dialog.close()
           void load("Resume session", getSession(id), (entries) => {
-            sessionId = id
+            setSessionId(id)
             setTurns(turnsFromSession(entries))
             // recall THIS session's prompts, the questions as typed
             inputHistory.load(
@@ -503,6 +532,7 @@ function AppInner() {
     const groups = buildCommandGroups(
       {
         newSession: newResearch,
+        newDocumentSession: newDocumentResearch,
         resumeSession: chooseSession,
         compactContext: runCompact,
         sessionStatus: showStatus,
@@ -525,7 +555,7 @@ function AppInner() {
         model: model(),
         running: running(),
         hasAnswer: !running() && !!lastAnswer(),
-        hasSession: !!sessionId && turns().length > 0,
+        hasSession: !!sessionId() && turns().length > 0,
       },
     )
     dialog.show(() => (
@@ -601,12 +631,12 @@ function AppInner() {
     // profile and the server uses its auto-default. Either way there's always something to run.
     if (composerInput) composerInput.clear() // clear the field once submitted
     const activeMode = mode()
-    const fromWelcome = view() === "welcome"
     setRunning(true)
     abort = new AbortController() // esc cancels this run (aborts the SSE fetch)
     // A fresh session starts a new id; follow-ups reuse it so the backend threads
     // the prior turns' history.
-    if (fromWelcome || !sessionId) sessionId = crypto.randomUUID()
+    const id = sessionId() ?? crypto.randomUUID()
+    setSessionId(id)
     // Immediate feedback: swap to the research view and append the running turn the
     // instant the user hits enter.
     setView("research")
@@ -621,7 +651,7 @@ function AppInner() {
           {
             question: q,
             mode: activeMode,
-            sessionId,
+            sessionId: id,
             profile: activeProfile(),
           },
           { signal: abort.signal },
@@ -730,6 +760,7 @@ function AppInner() {
       <Footer
         version={version()}
         notice={notice()}
+        documents={documentSession()}
         context={prefs().side_panel ? undefined : contextMeter(usage())}
       />
       <box height={1} flexShrink={0} />

@@ -42,9 +42,11 @@ function SourceEntry(props: { source: SourceItem }) {
     <box flexDirection="column" flexShrink={0} paddingBottom={1} paddingRight={2}>
       <text wrapMode="word">
         <span style={{ fg: theme.accent }}>[{s().index}] </span>
-        <a href={s().url} style={{ fg: md.link, underline: true }}>
-          {s().title}
-        </a>
+        <Show when={!s().url.startsWith("urn:")} fallback={<span>{s().title}</span>}>
+          <a href={s().url} style={{ fg: md.link, underline: true }}>
+            {s().title}
+          </a>
+        </Show>
       </text>
       <Show when={s().headline && s().headline !== s().title}>
         <text fg={theme.textMuted} wrapMode="word">

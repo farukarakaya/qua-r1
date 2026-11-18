@@ -32,9 +32,10 @@ def _pdf() -> bytes:
 
 
 _PAGES = [{"page": 1, "markdown": "# FAVÖK\n\n| 2027T | 44,5 |"}, {"page": 2, "markdown": ""}]
+_SUMMARY = "This report includes a FAVÖK forecast on page 1."
 
 
-def _response(pages: list, *, status: str = "completed") -> httpx.Response:
+def _response(pages: list, *, status: str = "completed", summary: str = _SUMMARY) -> httpx.Response:
     return httpx.Response(
         200,
         json={
@@ -49,7 +50,7 @@ def _response(pages: list, *, status: str = "completed") -> httpx.Response:
                     "content": [
                         {
                             "type": "output_text",
-                            "text": json.dumps({"pages": pages}),
+                            "text": json.dumps({"summary": summary, "pages": pages}),
                             "annotations": [],
                         }
                     ],
@@ -91,7 +92,7 @@ class TestDocuments(unittest.TestCase):
         self.assertFalse(first.reused)
         same_pdf = self.home / "renamed.pdf"
         same_pdf.write_bytes(self.pdf.read_bytes())
-        with patch.object(documents, "get_profile", side_effect=AssertionError):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             second = documents.add_pdf(same_pdf)
         self.assertTrue(second.reused)
         self.assertEqual(first.path, second.path)
@@ -109,8 +110,11 @@ class TestDocuments(unittest.TestCase):
         self.assertNotIn("tools", payload)
         self.assertNotIn("max_output_tokens", payload)
         self.assertTrue(payload["text"]["format"]["strict"])
+        self.assertIn("summary", payload["text"]["format"]["schema"]["required"])
         self.assertEqual(stat.S_IMODE(first.path.stat().st_mode), 0o600)
         saved = json.loads(first.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["schema_version"], 2)
+        self.assertEqual(saved["summary"], _SUMMARY)
         self.assertEqual(saved["pages"], _PAGES)
         self.assertEqual(saved["source_name"], "report.pdf")
         self.assertEqual(saved["sha256"], first.path.stem)
@@ -190,13 +194,31 @@ class TestDocuments(unittest.TestCase):
         self.assertEqual(len(self.requests), 1)
 
     def test_partial_or_incomplete_transcript_is_not_saved(self):
-        replies = iter([_response(_PAGES[:1]), _response(_PAGES, status="incomplete")])
+        replies = iter(
+            [
+                _response(_PAGES[:1]),
+                _response(_PAGES, status="incomplete"),
+                _response(_PAGES, summary="  "),
+            ]
+        )
         self._mock_openai(lambda: next(replies))
-        for expected in ("every page in order", "did not finish"):
+        for expected in (
+            "every page in order",
+            "did not finish",
+            "did not return a report summary",
+        ):
             with self.assertRaisesRegex(documents.DocumentError, expected):
                 documents.add_pdf(self.pdf)
             self.assertEqual(list((self.home / "docs").glob("*.json")), [])
-        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(len(self.requests), 3)
+
+    def test_invalid_saved_transcript_does_not_trigger_another_upload(self):
+        self._mock_openai(lambda: _response(_PAGES))
+        imported = documents.add_pdf(self.pdf)
+        imported.path.write_text("", encoding="utf-8")
+        with self.assertRaisesRegex(documents.DocumentError, "saved transcript is unreadable"):
+            documents.add_pdf(self.pdf)
+        self.assertEqual(len(self.requests), 1)
 
     def test_api_error_is_not_retried_or_saved(self):
         self._mock_openai(lambda: httpx.Response(500, json={"error": {"message": "private body"}}))
