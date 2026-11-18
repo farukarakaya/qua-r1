@@ -49,6 +49,7 @@ async def run_research(
     delivery: str = "",
     sources: list[dict[str, Any]] | None = None,
     document_context: str = "",
+    use_istfin: bool = False,
 ) -> dict[str, Any]:
     """Run a deep-research trajectory end-to-end and return it (with citations).
 
@@ -88,6 +89,7 @@ async def run_research(
             client=client,
             config=config,
             use_documents=bool(document_context),
+            use_istfin=use_istfin and policy is RunPolicy.INTERACTIVE,
         ),
         config=config,
         client=client,

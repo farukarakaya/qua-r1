@@ -3,3 +3,5 @@
 
 """A session on disk: the store of its log, the record format, what writes the records during a
 run, and the index beside the logs."""
+
+ISTFIN_SESSION_PREFIX = "istfin-"

@@ -24,6 +24,7 @@ from typing import Any
 import httpx
 
 from trading_r1.providers import get_profile
+from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX
 from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX
 from trading_r1.sync.client import DEFAULT_BASE_URL, ArchiveError
 from trading_r1.sync.engine import SyncEngine
@@ -32,7 +33,7 @@ from trading_r1.sync.store import PENDING_DELETE, SyncStore, shown_state
 _LOG = logging.getLogger(__name__)
 
 TICK_S = 30.0
-NOT_SYNCED = ("job-", "telegram-", DOCUMENT_SESSION_PREFIX)
+NOT_SYNCED = ("job-", "telegram-", DOCUMENT_SESSION_PREFIX, ISTFIN_SESSION_PREFIX)
 NO_KEY = "off: no Tauric key"
 _WORST = ("error", "full", "pending")  # what the whole shows: the first of these with a session
 

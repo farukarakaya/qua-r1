@@ -36,6 +36,7 @@ from trading_r1.tools.core.read_doc import SPEC as READ_DOC_SPEC
 from trading_r1.tools.data.equity import EQUITY_DATA_SPECS
 from trading_r1.tools.data.macro import MACRO_DATA_SPECS
 from trading_r1.tools.data.market import MARKET_DATA_SPECS
+from trading_r1.tools.data.market.istfin import ISTFIN_SPECS
 from trading_r1.tools.web import FetchCache, build_research_registry
 from trading_r1.tools.web.search_engines import SearchEngine
 from trading_r1.tools.web.visit_fetch import Fetcher
@@ -52,6 +53,7 @@ def build_tool_registry(
     client: Any | None = None,
     config: RuntimeConfig | None = None,
     use_documents: bool = False,
+    use_istfin: bool = False,
 ) -> ToolRegistry:
     """Core research tools, plus deferred equity, market, macro and compute tools."""
     registry = build_research_registry(
@@ -61,15 +63,21 @@ def build_tool_registry(
     registry.register(PLAN_SPEC)  # core: a live research plan/checklist for multi-step work
     if use_documents:
         registry.register(READ_DOC_SPEC)
+    if use_istfin:
+        for spec in ISTFIN_SPECS:
+            registry.register(spec)
     for spec in (*EQUITY_DATA_SPECS, *MARKET_DATA_SPECS, *MACRO_DATA_SPECS, *COMPUTE_SPECS):
         registry.register(spec)
     return registry
 
 
-def catalog_tool_registry(*, use_documents: bool = False) -> ToolRegistry:
+def catalog_tool_registry(*, use_documents: bool = False, use_istfin: bool = False) -> ToolRegistry:
     """A tool catalog with a fresh cache and default reader, no run state."""
     return build_tool_registry(
-        FetchCache(), get_profile("vllm-reader", env={}), use_documents=use_documents
+        FetchCache(),
+        get_profile("vllm-reader", env={}),
+        use_documents=use_documents,
+        use_istfin=use_istfin,
     )
 
 
@@ -185,12 +193,13 @@ def prompt_overhead(
     mode: str | None = None,
     memory: MemoryStore | None = None,
     document_context: str = "",
+    use_istfin: bool = False,
 ) -> int:
     """The tokens a session's next request carries beside its history: the system prompt and the
     schemas of the core tools and of those its history loaded."""
     session = ToolSessionState()
     registry = build_run_registry(
-        catalog_tool_registry(use_documents=bool(document_context)),
+        catalog_tool_registry(use_documents=bool(document_context), use_istfin=use_istfin),
         skills,
         session,
         SkillSessionState(),

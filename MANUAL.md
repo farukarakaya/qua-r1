@@ -138,6 +138,30 @@ Use daily bars for cross-market baskets. If any symbol fails, the whole basket f
 Alignment matches dates, not closing times, and leaves prices in their listing currencies.
 Convert to a common currency before optimizing.
 
+### Use IstFin alongside borsapy
+
+Launch the backend with `ISTFIN_API_KEY` set. From a source checkout with a private `.env`
+file, use `uv run --locked --env-file .env --extra bist trading-r1`. If the terminal
+attaches to an existing backend, set the key on that backend instead (or use
+`trading-r1 secrets set ISTFIN_API_KEY`). Open the `/` palette and choose **New session with
+IstFin**. The `/research` API equivalent is a fresh `session_id` starting with `istfin-`.
+Ordinary sessions, scheduled jobs and Telegram turns do not get these tools.
+
+| Tool | Example request | What it returns |
+|---|---|---|
+| `data.market.istfin_news` | `symbols=["THYAO.IS"], types=["FR"]` | One page of KAP filings with UTC publication times and a cursor. Date filters use Istanbul days. |
+| `data.market.istfin_disclosure` | `disclosure_id` from a search result | KAP content blocks, correction flags and attachment links. Attachments are not downloaded. |
+| `data.market.istfin_ratios` | `symbol="XIST:THYAO", metrics=["pe","pb"]` | Daily valuation multiples with the reporting period and source used on each day. |
+| `data.market.istfin_index` | `symbol="XIST:XU100"` | Current constituents, percentage weights and membership date, not a historical universe. |
+
+History and quotas depend on the subscription. IstFin is never a price or backtest feed here:
+its historical bars can be unadjusted across bonus issues. borsapy still serves BIST price
+history and structured corporate actions. Failed requests do not switch providers.
+
+Use an IstFin session for personal research only. The selected model receives the data it
+reads; the session is logged locally but is not synced to Tauric or given shared memory.
+Do not share licensed data in exported reports or channels. See [IstFin's terms](https://api.istfin.com/yasal/kullanim-kosullari).
+
 ## Your data and keys
 
 - `trading-r1 secrets set` and the key forms store keys in `~/.trading-r1/credentials.json`, and
