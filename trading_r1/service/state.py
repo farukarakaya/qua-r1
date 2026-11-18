@@ -95,7 +95,7 @@ def prompt_overhead_of(
         SESSIONS.history(session_id),
         skills=default_skill_registry(),
         mode=mode,
-        memory=None if use_istfin else MEMORY,
+        memory=MEMORY,
         document_context=document_context,
         use_istfin=use_istfin,
     )

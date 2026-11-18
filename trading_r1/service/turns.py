@@ -73,8 +73,7 @@ async def session_turn(
                 run_start={"version": SSE_VERSION},
                 on_event=on_event,
                 run=run,
-                # Keep licensed results out of notes shared with other sessions.
-                memory=None if session_id.startswith(ISTFIN_SESSION_PREFIX) else state.MEMORY,
+                memory=state.MEMORY,
                 use_istfin=session_id.startswith(ISTFIN_SESSION_PREFIX),
                 config=config,
                 document_context=document_context,

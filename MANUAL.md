@@ -143,7 +143,7 @@ Convert to a common currency before optimizing.
 Set `ISTFIN_API_KEY` on the backend (or use `uv run trading-r1 secrets set ISTFIN_API_KEY`),
 then launch the terminal with `uv run trading-r1` and ask your question. New ordinary chats
 include IstFin alongside borsapy and Tauric when the key is configured. These chats have
-archive sync and shared memory off from the first turn, even if you never call IstFin.
+archive sync off from the first turn, even if you never call IstFin.
 Without a key, new chats keep the usual settings. Resuming a chat preserves its original policy.
 PDF sessions, scheduled jobs and Telegram turns do not gain IstFin tools.
 API clients can `POST /sessions` and pass the returned `id` to `/research` for the same default.
@@ -160,7 +160,9 @@ its historical bars can be unadjusted across bonus issues. borsapy still serves 
 history and structured corporate actions. Failed requests do not switch providers.
 
 Use an IstFin session for personal research only. The selected model receives the data it
-reads; the session is logged locally but is not synced to Tauric or given shared memory.
+reads; the session is logged locally but is not synced to Tauric. Like other chats, it can
+read and save personal preferences in shared notes. Keep market data out of those notes.
+Settings > Remembered notes lets you view or delete notes, not turn memory on or off.
 Do not share licensed data in exported reports or channels. See [IstFin's terms](https://api.istfin.com/yasal/kullanim-kosullari).
 
 ## Your data and keys
