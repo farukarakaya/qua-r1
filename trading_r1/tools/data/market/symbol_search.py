@@ -6,7 +6,7 @@
 Resolves a company, instrument or partial symbol to Tauric's instruments. One
 search over Tauric's instrument registry (listed securities, futures roots, currency pairs,
 crypto pairs and index and macro series), optionally within one class. A match's symbol goes to
-data.market.prices.
+data.market.prices. Explicit BIST queries search borsapy instead.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from trading_r1.contract.spec import Output, Provenance, Result, ToolError, ToolSpec
 from trading_r1.contract.units import Code
+from trading_r1.tools.data import bist
 from trading_r1.tools.data.symbols import INDEX_SERIES
 from trading_r1.tools.data.tauric import Tauric, provenance
 
@@ -25,9 +26,13 @@ _DESCRIPTION = (
     "or partial symbol (e.g. 'Vistra', 'crude oil', 'euro dollar', 'S&P 500', 'bitcoin') in "
     "Tauric's registry (a maintained set of listings, not every listed company). asset_type "
     "'any' (default) ranks matches across classes; a class (equity, etf, fund, index, future, "
-    "currency, cryptocurrency) searches within it. Each match gives symbol, Tauric `key`, name and "
+    "currency, cryptocurrency) searches within it. Each match gives symbol, instrument `key`, "
+    "name and "
     "instrument type; pass the symbol to data_market_prices (a macro series key goes to "
-    "data_macro_series). Use this instead of guessing a ticker. Short queries match best."
+    "data_macro_series). Use this instead of guessing a ticker. Short queries match best. "
+    "For BIST, prefix a name or partial symbol with XIST: or use a .IS suffix; "
+    "search stocks (equity) or indices (index) via borsapy, or use 'any' to look for stocks "
+    "first and indices if none match."
 )
 # asset_type to the registry filters that select it
 _FILTERS: dict[str, dict[str, str]] = {
@@ -88,7 +93,69 @@ class SymbolSearchOutput(Output):
     matches: list[Match]
 
 
+def _bist_query(query: str) -> str | None:
+    if query.upper().startswith("XIST:"):
+        query = query[5:].strip()
+        return query[:-3].strip() if query.upper().endswith(".IS") else query
+    if ":" not in query and query.upper().endswith(".IS"):
+        return query[:-3].strip()
+    return None
+
+
+def _bist_matches(bp: Any, query: str, req: SymbolSearchRequest) -> tuple[list[Match], str]:
+    def matches(rows: Any, code: str, name: str, kind: str) -> list[Match]:
+        found: dict[str, Match] = {}
+        for row in rows:
+            if not row.get(code):
+                continue
+            try:
+                ticker = bist.bist_ticker(f"XIST:{row[code]}")
+            except ToolError:
+                continue
+            symbol = f"XIST:{ticker}"
+            if symbol not in found:
+                found[symbol] = Match(
+                    symbol=symbol,
+                    key=f"security:{symbol}",
+                    name=row.get(name),
+                    instrument_type=kind,
+                )
+            if len(found) >= req.limit:
+                break
+        return list(found.values())
+
+    if req.asset_type != "index":
+        rows = bp.search_companies(query).to_dict("records")
+        stocks = matches(rows, "ticker", "name", "stock")
+        if stocks or req.asset_type == "equity":
+            return stocks, "KAP (via borsapy)"
+    rows = bp.search(query, type="index", exchange="BIST", limit=req.limit, full_info=True)
+    supported = set(bp.indices())  # Use the same index list as prices and quotes.
+    indices = (
+        row for row in rows if row.get("exchange") == "BIST" and row.get("symbol") in supported
+    )
+    return matches(indices, "symbol", "description", "index"), bist.SOURCE
+
+
+async def _bist_search(req: SymbolSearchRequest, query: str) -> Result:
+    if not query:
+        raise ToolError("Give a BIST name or ticker, e.g. XIST:THYAO or THYAO.IS.")
+    if req.asset_type not in {"any", "equity", "index"}:
+        raise ToolError("BIST symbol search supports asset_type 'any', 'equity' or 'index'.")
+    matches, source = await bist.run(
+        req.query, "symbol search", lambda bp: _bist_matches(bp, query, req)
+    )
+    if not matches:
+        raise ToolError(f"No BIST symbol matched '{req.query}': try a shorter name or ticker.")
+    return Result(
+        SymbolSearchOutput(query=req.query, asset_type=req.asset_type, matches=matches),
+        Provenance(**provenance(subject=req.query, source=source)),
+    )
+
+
 async def _handler(req: SymbolSearchRequest) -> Result:
+    if (query := _bist_query(req.query)) is not None:
+        return await _bist_search(req, query)
     async with Tauric() as api:
         body = await api.get(
             "/instruments", q=req.query, limit=req.limit, **_FILTERS[req.asset_type]

@@ -455,7 +455,7 @@ async def _bist_bars(
         earliest = last - dt.timedelta(days=sessions * 2 + 14)
     if last < max(earliest, floor):
         raise ToolError("No completed BIST sessions in the requested history window.")
-    rows = await bist.fetch_daily(ticker, max(earliest, floor), last)
+    rows, is_index = await bist.fetch_daily(ticker, max(earliest, floor), last)
     if not rows:
         raise ToolError(f"No {bist.SOURCE} bars for XIST:{ticker} in the requested window.")
     notes: list[str] = []
@@ -468,8 +468,9 @@ async def _bist_bars(
     return Bars(
         resample(rows, interval),
         resolve(f"XIST:{ticker}"),
-        currency="TRY",
-        price_basis="split_adjusted",
+        currency=None if is_index else "TRY",
+        instrument_type="index" if is_index else None,
+        price_basis="quoted" if is_index else "split_adjusted",
         source=bist.SOURCE,
         requested_start=first,
         requested_end=last.isoformat() if end and end < today else None,

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Daily Borsa İstanbul prices via the optional borsapy adapter."""
+"""Shared Borsa İstanbul routing and optional borsapy adapter."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import asyncio
 import datetime as dt
 import math
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -37,38 +38,52 @@ def istanbul() -> ZoneInfo:
         raise ToolError("BIST prices require Istanbul time zone data (install tzdata).") from None
 
 
-def _history(ticker: str, first: dt.date, last: dt.date) -> list[dict[str, Any]]:
-    try:
-        import borsapy
-    except ImportError:
-        raise ToolError("BIST prices require the 'bist' extra: uv sync --extra bist.") from None
+async def run[T](subject: str, dataset: str, fetch: Callable[[Any], T]) -> T:
+    def call() -> T:
+        try:
+            import borsapy
+        except ImportError:
+            raise ToolError(
+                "BIST data requires the 'bist' extra: uv run --locked --extra bist trading-r1."
+            ) from None
+        try:
+            return fetch(borsapy)
+        except ToolError:
+            raise
+        except Exception:
+            raise ToolError(f"borsapy could not fetch {dataset} for {subject}.") from None
 
-    try:
-        frame = borsapy.Ticker(ticker).history(
-            interval="1d",
-            start=first.isoformat(),
-            end=last.isoformat(),
-            adjust=True,
-            actions=False,
-            auto_adjust=False,
-        )
-    except Exception:
-        raise ToolError(f"{SOURCE} could not fetch history for XIST:{ticker}.") from None
+    return await asyncio.get_running_loop().run_in_executor(_POOL, call)
+
+
+def _history(
+    bp: Any, ticker: str, first: dt.date, last: dt.date
+) -> tuple[list[dict[str, Any]], bool]:
+    is_index = ticker in bp.indices()
+    kwargs = {} if is_index else {"adjust": True, "actions": False, "auto_adjust": False}
+    instrument = bp.Index(ticker) if is_index else bp.Ticker(ticker)
+    frame = instrument.history(
+        interval="1d", start=first.isoformat(), end=last.isoformat(), **kwargs
+    )
     zone = istanbul()
     rows: dict[str, dict[str, Any]] = {}
     try:
         if frame.empty:
-            return []
+            return [], is_index
         prices = frame[["Open", "High", "Low", "Close", "Volume"]]
         for stamp, *values in prices.itertuples(index=True, name=None):
             day = stamp.astimezone(zone).date() if stamp.tzinfo else stamp.date()
             if not first <= day <= last:
                 continue
             date = day.isoformat()
-            o, h, low, c, volume = map(float, values)
+            o, h, low, c = map(float, values[:4])
+            volume = float(values[4])
+            if is_index and not math.isfinite(volume):
+                volume = None  # An index level need not have a reported volume.
             if (
-                not all(math.isfinite(v) for v in (o, h, low, c, volume))
-                or not (0 < low <= min(o, c) <= max(o, c) <= h and volume >= 0)
+                not all(math.isfinite(v) for v in (o, h, low, c))
+                or not (0 < low <= min(o, c) <= max(o, c) <= h)
+                or (volume is not None and (not math.isfinite(volume) or volume < 0))
                 or date in rows
             ):
                 raise ValueError("invalid or duplicate bar")
@@ -82,8 +97,10 @@ def _history(ticker: str, first: dt.date, last: dt.date) -> list[dict[str, Any]]
             }
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
         raise ToolError(f"{SOURCE} returned invalid daily bars for XIST:{ticker}.") from None
-    return [rows[date] for date in sorted(rows)]
+    return [rows[date] for date in sorted(rows)], is_index
 
 
-async def fetch_daily(ticker: str, first: dt.date, last: dt.date) -> list[dict[str, Any]]:
-    return await asyncio.get_running_loop().run_in_executor(_POOL, _history, ticker, first, last)
+async def fetch_daily(
+    ticker: str, first: dt.date, last: dt.date
+) -> tuple[list[dict[str, Any]], bool]:
+    return await run(f"XIST:{ticker}", "history", lambda bp: _history(bp, ticker, first, last))

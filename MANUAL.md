@@ -71,14 +71,28 @@ Sync is on by default with a Tauric key, whichever model you use: your sessions,
 questions, model requests and responses and tool results, are copied to your account at
 `api.tauric.ai`. Turn it off under *Settings > Session sync* or with `trading-r1 sync off`.
 
-## Borsa İstanbul price history
+## Borsa İstanbul market data
 
 From a source checkout, launch with `uv run --locked --extra bist trading-r1` to enable
 this optional provider. Ask for `XIST:THYAO` or `THYAO.IS` with the price or aligned-price tool. borsapy uses
 TradingView for daily OHLCV in TRY, excluding the current Istanbul session date. Weekly
-and monthly bars are resampled; intraday bars are not available. Closes are split-adjusted
+and monthly bars are resampled; intraday bars are not available. Stock closes are split-adjusted
 only, so returns exclude cash dividends. Tauric continues to serve U.S. stocks and other
 existing instruments; failed BIST requests do not switch providers.
+
+For BIST quotes, use `data.market.quotes`. For recent KAP company disclosures, use
+`data.market.news` with the qualified symbol. These are official disclosures, not general
+press coverage or a historical news archive. Use `XIST:<name>` in symbol search to look up
+BIST companies. Known indices such as `XIST:XU100` also support daily price history.
+
+`data.market.bist` serves BIST company profiles, financial statements, dividends, capital
+changes (including paid rights), holders, analyst targets, expected filing windows, KAP
+disclosure text, index constituents, and stock screening. For example, request
+`symbol="XIST:THYAO", dataset="income_statement", cadence="quarterly"`. Financial statement
+line items are as reported by İş Yatırım, not normalized SEC data. For banks, select
+`financial_group="UFRS"`; bank-format cash flow is not available. Expected filing windows
+are not confirmed earnings release dates. The Tauric equity tools direct qualified BIST
+requests to the BIST tools instead of querying Tauric.
 
 Use daily bars for cross-market baskets. Alignment matches dates, not closing times, and
 leaves prices in their listing currencies. Convert to a common currency before optimizing.

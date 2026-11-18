@@ -20,7 +20,7 @@ class BistPriceTests(unittest.IsolatedAsyncioTestCase):
         ]
         ticker.return_value.history.return_value = frame
         with (
-            patch.dict(sys.modules, {"borsapy": SimpleNamespace(Ticker=ticker)}),
+            patch.dict(sys.modules, {"borsapy": SimpleNamespace(Ticker=ticker, indices=list)}),
             patch.object(pricing, "Tauric", side_effect=AssertionError("unexpected Tauric call")),
         ):
             for symbol in ("THYAO.IS", "XIST:THYAO"):
@@ -46,7 +46,7 @@ class BistPriceTests(unittest.IsolatedAsyncioTestCase):
     async def test_bist_failures_do_not_call_tauric(self) -> None:
         ticker = Mock(side_effect=RuntimeError("raw provider error"))
         with (
-            patch.dict(sys.modules, {"borsapy": SimpleNamespace(Ticker=ticker)}),
+            patch.dict(sys.modules, {"borsapy": SimpleNamespace(Ticker=ticker, indices=list)}),
             patch.object(pricing, "Tauric", side_effect=AssertionError("unexpected Tauric call")),
         ):
             with self.assertRaisesRegex(ToolError, "daily, weekly, and monthly"):
@@ -54,6 +54,25 @@ class BistPriceTests(unittest.IsolatedAsyncioTestCase):
             ticker.assert_not_called()
             with self.assertRaisesRegex(ToolError, "could not fetch history for XIST:THYAO"):
                 await pricing.fetch_bars("THYAO.IS", "5d", "1d")
+
+    async def test_index_history_uses_index_not_ticker(self) -> None:
+        index = Mock()
+        frame = MagicMock(empty=False)
+        frame.__getitem__.return_value.itertuples.return_value = [
+            (dt.datetime(2024, 6, 3), 100, 105, 95, 102, float("nan")),
+        ]
+        index.return_value.history.return_value = frame
+        bp = SimpleNamespace(Index=index, indices=lambda: ["XU100"])
+        with patch.dict(sys.modules, {"borsapy": bp}):
+            bars = await pricing.fetch_bars(
+                "XIST:XU100", "1d", "1d", dt.date(2024, 6, 3), dt.date(2024, 6, 3)
+            )
+        index.assert_called_once_with("XU100")
+        index.return_value.history.assert_called_once_with(
+            interval="1d", start="2024-06-03", end="2024-06-03"
+        )
+        self.assertEqual((bars.instrument_type, bars.price_basis), ("index", "quoted"))
+        self.assertIsNone(bars.rows[0]["volume"])
 
     async def test_us_history_still_uses_tauric(self) -> None:
         response = {"instrument": {"currency": "USD"}, "price_basis": "split_dividend_adjusted"}
