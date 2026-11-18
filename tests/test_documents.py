@@ -11,11 +11,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
-from openai import OpenAI
+from openai import AsyncOpenAI
 from reportlab.pdfgen.canvas import Canvas
 
 from trading_r1 import documents
 from trading_r1.cli import documents as cli
+from trading_r1.providers import available_backbones, client
 
 
 def _pdf() -> bytes:
@@ -73,21 +74,22 @@ class TestDocuments(unittest.TestCase):
         self.enterContext(patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}))
         self.enterContext(
             patch.object(
-                documents,
-                "OpenAI",
-                side_effect=lambda **kwargs: OpenAI(
-                    **kwargs, http_client=httpx.Client(transport=transport)
+                client,
+                "AsyncOpenAI",
+                side_effect=lambda **kwargs: AsyncOpenAI(
+                    **kwargs, http_client=httpx.AsyncClient(transport=transport)
                 ),
             )
         )
 
     def test_whole_pdf_one_request_and_reuse_by_contents(self):
         self._mock_openai(lambda: _response(_PAGES))
-        first = documents.add_pdf(self.pdf, model="vision-test-model")
+        with patch.dict(os.environ, {"TR1_GPT_OCR_MODEL": "profile-test-model"}):
+            first = documents.add_pdf(self.pdf, model="vision-test-model")
         self.assertFalse(first.reused)
         same_pdf = self.home / "renamed.pdf"
         same_pdf.write_bytes(self.pdf.read_bytes())
-        with patch.object(documents.credentials, "overlay", side_effect=AssertionError):
+        with patch.object(documents, "get_profile", side_effect=AssertionError):
             second = documents.add_pdf(same_pdf)
         self.assertTrue(second.reused)
         self.assertEqual(first.path, second.path)
@@ -102,11 +104,62 @@ class TestDocuments(unittest.TestCase):
         self.assertEqual(base64.b64decode(encoded), self.pdf.read_bytes())
         self.assertEqual(payload["model"], "vision-test-model")
         self.assertFalse(payload["store"])
+        self.assertNotIn("tools", payload)
+        self.assertTrue(payload["text"]["format"]["strict"])
         self.assertEqual(stat.S_IMODE(first.path.stat().st_mode), 0o600)
         saved = json.loads(first.path.read_text(encoding="utf-8"))
         self.assertEqual(saved["pages"], _PAGES)
         self.assertEqual(saved["source_name"], "report.pdf")
         self.assertEqual(saved["sha256"], first.path.stem)
+        self.assertEqual(saved["profile"], "gpt-ocr")
+        self.assertEqual(saved["model"], "vision-test-model")
+
+    def test_ocr_profile_does_not_inherit_chat_settings(self):
+        self._mock_openai(lambda: _response(_PAGES))
+        with patch.dict(
+            os.environ,
+            {
+                "TR1_PROFILE": "gpt",
+                "TR1_GPT_BASE_URL": "https://chat.example/v1",
+                "TR1_GPT_MODEL": "chat-test-model",
+                "TR1_GPT_API_KEY": "chat-key",
+                "OPENAI_BASE_URL": "https://sdk.example/v1",
+            },
+        ):
+            documents.add_pdf(self.pdf)
+        (request,) = self.requests
+        self.assertEqual(str(request.url), "https://api.openai.com/v1/responses")
+        self.assertEqual(request.headers["Authorization"], "Bearer test-key")
+        self.assertEqual(json.loads(request.content)["model"], "gpt-4.1-mini")
+        self.assertNotIn("gpt-ocr", {row["name"] for row in available_backbones()})
+
+    def test_ocr_profile_uses_its_own_config(self):
+        self._mock_openai(lambda: _response(_PAGES))
+        config = {"profiles": {"gpt-ocr": {"model": "file-model", "output_limit": 12345}}}
+        (self.home / "providers.json").write_text(json.dumps(config), encoding="utf-8")
+        with patch.dict(
+            os.environ,
+            {
+                "TR1_GPT_OCR_BASE_URL": "https://ocr.example/v1",
+                "TR1_GPT_OCR_MODEL": "env-model",
+                "TR1_GPT_OCR_API_KEY": "ocr-key",
+            },
+        ):
+            documents.add_pdf(self.pdf)
+        (request,) = self.requests
+        self.assertEqual(str(request.url), "https://ocr.example/v1/responses")
+        self.assertEqual(request.headers["Authorization"], "Bearer ocr-key")
+        payload = json.loads(request.content)
+        self.assertEqual(payload["model"], "env-model")
+        self.assertEqual(payload["max_output_tokens"], 12345)
+
+    def test_missing_key_is_reported_before_upload(self):
+        with (
+            patch.object(client, "AsyncOpenAI", side_effect=AssertionError),
+            self.assertRaisesRegex(documents.DocumentError, "secrets set OPENAI_API_KEY"),
+        ):
+            documents.add_pdf(self.pdf)
+        self.assertEqual(list((self.home / "docs").glob("*.json")), [])
 
     def test_simultaneous_imports_only_send_once(self):
         self._mock_openai(lambda: _response(_PAGES))

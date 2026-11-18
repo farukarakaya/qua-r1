@@ -9,7 +9,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from trading_r1.documents import DEFAULT_OCR_MODEL, DocumentError, add_pdf
+from trading_r1.documents import DocumentError, add_pdf
+from trading_r1.providers.builtins import PDF_OCR_PROFILE
 from trading_r1.state.paths import StateDirNotPrivateError
 
 
@@ -34,14 +35,13 @@ def main(argv: list[str]) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     add = sub.add_parser(
         "add",
-        help="send each new PDF in full to OpenAI for OCR",
-        description="Send each new PDF in full to OpenAI and save its transcript locally. "
+        help="send each new PDF in full to the OCR model",
+        description=f"Send each new PDF in full using the {PDF_OCR_PROFILE} profile "
+        "and save its transcript locally. "
         "Identical files reuse the existing transcript without an upload.",
     )
     add.add_argument("pdf", metavar="PDF", type=Path, nargs="+", help="local PDF path(s)")
-    add.add_argument(
-        "--model", default=DEFAULT_OCR_MODEL, help="OpenAI model (default: %(default)s)"
-    )
+    add.add_argument("--model", help=f"override the model in the {PDF_OCR_PROFILE} profile")
     add.set_defaults(run=_add)
     args = parser.parse_args(argv)
     return args.run(args)
