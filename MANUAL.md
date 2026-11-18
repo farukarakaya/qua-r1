@@ -50,8 +50,9 @@ it does not use your selected chat or web reader model. `--model` overrides the 
 this import. To configure it persistently, edit `profiles.gpt-ocr` in `providers.json` or set
 `TR1_GPT_OCR_MODEL`. If you set `TR1_GPT_OCR_BASE_URL` to another endpoint, supply its own
 `TR1_GPT_OCR_API_KEY`; the default OpenAI key is not forwarded. Only import documents you
-can share with the OCR endpoint. Each input
-must fit the 20 MiB limit and the model's input and output limits.
+can share with the OCR endpoint. Each input must fit the 20 MiB limit and the model's input and
+output limits. See [custom OCR endpoints](docs/custom-model-endpoints.md#pdf-ocr-uses-a-separate-endpoint)
+for API requirements.
 
 The command prints the path to `~/.trading-r1/docs/<sha256>.json` (under `TR1_HOME` if set). The JSON
 contains numbered pages with Markdown text, including tables where the model could read them.
@@ -130,7 +131,8 @@ To add a model, give it a profile in `~/.trading-r1/providers.json`:
 ```
 
 Profiles with their own address send no key unless they name one (`"api_key_env": "MY_KEY"`). Those
-that extend a hosted profile keep its key, so name the key they should send.
+that extend a hosted profile keep its key, so name the key they should send. For a standalone
+gateway profile and a ready-to-copy example, see [Custom model endpoints](docs/custom-model-endpoints.md).
 
 ## Adding a skill
 

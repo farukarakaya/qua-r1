@@ -71,7 +71,8 @@ To uninstall, run `trading-r1 daemon uninstall` if you installed the service, th
 
 The app starts on the first you have set up, in the order OpenAI, Anthropic, Gemini, Tauric, vLLM.
 Change it with *Model…* in the palette, or start on one with `trading-r1 --profile gpt`. To point
-`vllm` at your server, see [Configuration](MANUAL.md#configuration).
+`vllm` at your server, see [Configuration](MANUAL.md#configuration). For other OpenAI-compatible
+servers and gateways, see [Custom model endpoints](docs/custom-model-endpoints.md).
 
 ## Use it
 
