@@ -256,7 +256,7 @@ async function getJson<T>(path: string, opts: ReqOpts = {}): Promise<T> {
   return (await (await request("GET", path, undefined, opts)).json()) as T
 }
 
-const postJson = async <T>(path: string, body: unknown, opts?: ReqOpts) =>
+const postJson = async <T>(path: string, body: unknown, opts?: ReqOpts & { signal?: AbortSignal }) =>
   (await (await request("POST", path, body, opts)).json()) as T
 const putJson = async <T>(path: string, body: unknown, opts?: ReqOpts) =>
   (await (await request("PUT", path, body, opts)).json()) as T
@@ -264,6 +264,10 @@ const putJson = async <T>(path: string, body: unknown, opts?: ReqOpts) =>
 export async function health(profile?: string, opts: ReqOpts = {}): Promise<Health> {
   const q = profile ? `?profile=${encodeURIComponent(profile)}` : ""
   return getJson<Health>(`/health${q}`, opts)
+}
+
+export async function newSessionId(signal: AbortSignal): Promise<string> {
+  return (await postJson<{ id: string }>("/sessions", undefined, { signal })).id
 }
 
 /** Saved sessions (most recently active first) for the /sessions picker. */

@@ -44,6 +44,7 @@ import {
   listCapabilities,
   listModels,
   listSessions,
+  newSessionId,
   researchStream,
   saveBackbone,
   savePrefs,
@@ -534,7 +535,6 @@ function AppInner() {
       {
         newSession: newResearch,
         newDocumentSession: newDocumentResearch,
-        newIstfinSession: () => newResearch(ISTFIN_SESSION_PREFIX),
         resumeSession: chooseSession,
         compactContext: runCompact,
         sessionStatus: showStatus,
@@ -635,15 +635,13 @@ function AppInner() {
     const activeMode = mode()
     setRunning(true)
     abort = new AbortController() // esc cancels this run (aborts the SSE fetch)
-    // A fresh session starts a new id; follow-ups reuse it so the backend threads
-    // the prior turns' history.
-    const id = sessionId() ?? crypto.randomUUID()
-    setSessionId(id)
     // Immediate feedback: swap to the research view and append the running turn the
     // instant the user hits enter.
     setView("research")
     setTurns((ts) => [...ts, newTurn(q)])
     try {
+      const id = sessionId() ?? (await newSessionId(abort.signal))
+      setSessionId(id)
       const apply = (ev: Parameters<typeof applyTurnEvent>[1]) => updateLast((t) => applyTurnEvent(t, ev))
       // Coalesce reasoning/token deltas on a ~16ms tick; non-delta events flush
       // first so the transcript keeps arrival order.

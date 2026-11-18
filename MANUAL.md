@@ -140,12 +140,13 @@ Convert to a common currency before optimizing.
 
 ### Use IstFin alongside borsapy
 
-Launch the backend with `ISTFIN_API_KEY` set. From a source checkout with a private `.env`
-file, use `uv run --env-file .env trading-r1`. If the terminal
-attaches to an existing backend, set the key on that backend instead (or use
-`trading-r1 secrets set ISTFIN_API_KEY`). Open the `/` palette and choose **New session with
-IstFin**. The `/research` API equivalent is a fresh `session_id` starting with `istfin-`.
-Ordinary sessions, scheduled jobs and Telegram turns do not get these tools.
+Set `ISTFIN_API_KEY` on the backend (or use `uv run trading-r1 secrets set ISTFIN_API_KEY`),
+then launch the terminal with `uv run trading-r1` and ask your question. New ordinary chats
+include IstFin alongside borsapy and Tauric when the key is configured. These chats have
+archive sync and shared memory off from the first turn, even if you never call IstFin.
+Without a key, new chats keep the usual settings. Resuming a chat preserves its original policy.
+PDF sessions, scheduled jobs and Telegram turns do not gain IstFin tools.
+API clients can `POST /sessions` and pass the returned `id` to `/research` for the same default.
 
 | Tool | Example request | What it returns |
 |---|---|---|

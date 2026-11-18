@@ -30,7 +30,6 @@ export interface CommandGroup {
 export interface CommandActions {
   newSession: () => void
   newDocumentSession: () => void
-  newIstfinSession: () => void
   resumeSession: () => void
   compactContext: () => void
   sessionStatus: () => void
@@ -70,12 +69,6 @@ export function buildCommandGroups(actions: CommandActions, ctx: CommandContext)
           id: "new-documents",
           title: "New session with PDFs…",
           run: actions.newDocumentSession,
-          unavailable: busy,
-        },
-        {
-          id: "new-istfin",
-          title: "New session with IstFin",
-          run: actions.newIstfinSession,
           unavailable: busy,
         },
         { id: "resume", title: "Resume session…", run: actions.resumeSession, unavailable: busy },

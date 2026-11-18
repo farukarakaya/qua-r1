@@ -10,7 +10,9 @@ import httpx
 
 from trading_r1.assembly import catalog_tool_registry
 from trading_r1.contract.spec import ToolError
-from trading_r1.service.syncing import SyncRuntime
+from trading_r1.service.routes.sessions import new_session
+from trading_r1.service.syncing import SyncRuntime, is_synced_kind
+from trading_r1.state.credentials import set_value
 from trading_r1.sync.engine import SyncEngine
 from trading_r1.tools.data.market import istfin
 
@@ -21,6 +23,17 @@ class IstfinTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(
             patch.dict(os.environ, {"TR1_HOME": self.home, "ISTFIN_API_KEY": "fixture"}, clear=True)
         )
+
+    def test_new_chat_policy_uses_backend_key_only_at_creation(self):
+        private = new_session()["id"]
+        self.assertFalse(is_synced_kind(private))
+        del os.environ["ISTFIN_API_KEY"]
+        ordinary = new_session()["id"]
+        self.assertTrue(is_synced_kind(ordinary))
+        set_value("ISTFIN_API_KEY", "stored-fixture")
+        self.assertTrue(new_session()["id"].startswith("istfin-"))
+        self.assertTrue(is_synced_kind(ordinary))
+        self.assertFalse(is_synced_kind(private))
 
     def transport(self, respond):
         client = httpx.AsyncClient
