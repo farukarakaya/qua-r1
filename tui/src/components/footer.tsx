@@ -28,6 +28,7 @@ export function Footer(props: {
   notice?: string
   context?: ContextMeter
   documents?: boolean
+  istfin?: boolean
 }) {
   return (
     <box height={1} flexDirection="row" paddingLeft={2} paddingRight={2} gap={2} flexShrink={0}>
@@ -46,6 +47,9 @@ export function Footer(props: {
       <box flexGrow={1} />
       <Show when={props.documents}>
         <text fg={theme.accent}>PDFs on</text>
+      </Show>
+      <Show when={props.istfin}>
+        <text fg={theme.accent}>IstFin on, sync off</text>
       </Show>
       <Show when={props.context}>
         <text fg={props.context!.warn ? theme.warning : theme.textMuted}>

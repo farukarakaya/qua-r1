@@ -161,7 +161,8 @@ class ResearchRequest(BaseModel):
         None,
         pattern=f"^{SESSION_ID_PATTERN}$",
         description="Thread this turn into a session. Use a new ID starting with docs- to include "
-        "imported reports in a session that is not synced. Omit for a sessionless run.",
+        "imported reports, or istfin- for IstFin research. Neither kind is synced. "
+        "Omit for a sessionless run.",
     )
 
 

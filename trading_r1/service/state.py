@@ -23,6 +23,7 @@ from trading_r1.assembly import default_skill_registry, prompt_overhead
 from trading_r1.delivery import Outcome
 from trading_r1.providers import ModelProfile, ProfileSelectionError, get_profile
 from trading_r1.runtime.memory import MemoryStore
+from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX
 from trading_r1.runtime.session.store import SessionStore, default_sessions_dir
 from trading_r1.scheduler import JobStore, Scheduler
 from trading_r1.service import preferences
@@ -89,12 +90,14 @@ def prompt_overhead_of(
     if document_context is None:
         use_documents = bool(session_id and session_id.startswith(DOCUMENT_SESSION_PREFIX))
         document_context = catalog_context() if use_documents else ""
+    use_istfin = bool(session_id and session_id.startswith(ISTFIN_SESSION_PREFIX))
     return prompt_overhead(
         SESSIONS.history(session_id),
         skills=default_skill_registry(),
         mode=mode,
-        memory=MEMORY,
+        memory=None if use_istfin else MEMORY,
         document_context=document_context,
+        use_istfin=use_istfin,
     )
 
 

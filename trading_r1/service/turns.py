@@ -15,6 +15,7 @@ from trading_r1.providers.discovery import with_context_window
 from trading_r1.providers.health import ensure_local_ready
 from trading_r1.research import run_logged
 from trading_r1.runtime.auto_compact import compact_before_turn
+from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX
 from trading_r1.service import preferences, state
 from trading_r1.service.events import SSE_VERSION
 from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX, catalog_context
@@ -72,7 +73,9 @@ async def session_turn(
                 run_start={"version": SSE_VERSION},
                 on_event=on_event,
                 run=run,
-                memory=state.MEMORY,
+                # Keep licensed results out of notes shared with other sessions.
+                memory=None if session_id.startswith(ISTFIN_SESSION_PREFIX) else state.MEMORY,
+                use_istfin=session_id.startswith(ISTFIN_SESSION_PREFIX),
                 config=config,
                 document_context=document_context,
                 **run_kw,

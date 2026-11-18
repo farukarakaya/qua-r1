@@ -26,6 +26,7 @@ from typing import Any
 
 import httpx
 
+from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX
 from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX
 from trading_r1.sync.client import (
     APPLICATION,
@@ -161,7 +162,11 @@ class SyncEngine:
         """Send what the archive lacks of one enrolled session; returns its state. A session
         waiting out a backoff is left alone unless ``force`` is set."""
         entry = self.store.get(session_id)
-        if entry is None or not self._enabled or session_id.startswith(DOCUMENT_SESSION_PREFIX):
+        if (
+            entry is None
+            or not self._enabled
+            or session_id.startswith((DOCUMENT_SESSION_PREFIX, ISTFIN_SESSION_PREFIX))
+        ):
             return "off"
         async with self._lock(session_id):
             gen = self._gen

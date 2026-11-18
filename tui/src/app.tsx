@@ -75,6 +75,7 @@ type View = "welcome" | "research"
 
 // Reserved by the backend for sessions that can read PDFs and are not synced.
 const DOCUMENT_SESSION_PREFIX = "docs-"
+const ISTFIN_SESSION_PREFIX = "istfin-"
 
 function AppInner() {
   const dialog = useDialog()
@@ -217,11 +218,11 @@ function AppInner() {
     if (seed) void ask(seed) // run the seed now that a backbone is selected (or the server defaults)
   }
 
-  function newResearch(documents = false) {
+  function newResearch(prefix?: string) {
     if (running()) return
     setTurns([])
     inputHistory.load([]) // input recall is per-session: a new session starts empty
-    setSessionId(documents ? `${DOCUMENT_SESSION_PREFIX}${crypto.randomUUID()}` : undefined)
+    setSessionId(prefix ? `${prefix}${crypto.randomUUID()}` : undefined)
     setView("welcome")
     void refreshUsage()
   }
@@ -242,7 +243,7 @@ function AppInner() {
         onCancel={() => dialog.close()}
         onSelect={(choice) => {
           dialog.close()
-          if (choice === "enable") newResearch(true)
+          if (choice === "enable") newResearch(DOCUMENT_SESSION_PREFIX)
         }}
       />
     ))
@@ -533,6 +534,7 @@ function AppInner() {
       {
         newSession: newResearch,
         newDocumentSession: newDocumentResearch,
+        newIstfinSession: () => newResearch(ISTFIN_SESSION_PREFIX),
         resumeSession: chooseSession,
         compactContext: runCompact,
         sessionStatus: showStatus,
@@ -761,6 +763,7 @@ function AppInner() {
         version={version()}
         notice={notice()}
         documents={documentSession()}
+        istfin={sessionId()?.startsWith(ISTFIN_SESSION_PREFIX)}
         context={prefs().side_panel ? undefined : contextMeter(usage())}
       />
       <box height={1} flexShrink={0} />
