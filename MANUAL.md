@@ -82,8 +82,6 @@ existing instruments; failed BIST requests do not switch providers.
 
 Use daily bars for cross-market baskets. Alignment matches dates, not closing times, and
 leaves prices in their listing currencies. Convert to a common currency before optimizing.
-Confirm that your data permissions cover your use of the feed under
-[TradingView's terms](https://www.tradingview.com/policies/).
 
 ## Your data and keys
 
