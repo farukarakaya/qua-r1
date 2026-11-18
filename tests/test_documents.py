@@ -107,6 +107,7 @@ class TestDocuments(unittest.TestCase):
         self.assertEqual(payload["model"], "vision-test-model")
         self.assertFalse(payload["store"])
         self.assertNotIn("tools", payload)
+        self.assertNotIn("max_output_tokens", payload)
         self.assertTrue(payload["text"]["format"]["strict"])
         self.assertEqual(stat.S_IMODE(first.path.stat().st_mode), 0o600)
         saved = json.loads(first.path.read_text(encoding="utf-8"))
@@ -137,12 +138,13 @@ class TestDocuments(unittest.TestCase):
 
     def test_ocr_profile_uses_its_own_config(self):
         self._mock_openai(lambda: _response(_PAGES))
-        config = {"profiles": {"gpt-ocr": {"model": "file-model", "output_limit": 12345}}}
+        config = {
+            "profiles": {"gpt-ocr": {"model": "file-model", "base_url": "https://ocr.example/v1"}}
+        }
         (self.home / "providers.json").write_text(json.dumps(config), encoding="utf-8")
         with patch.dict(
             os.environ,
             {
-                "TR1_GPT_OCR_BASE_URL": "https://ocr.example/v1",
                 "TR1_GPT_OCR_MODEL": "env-model",
                 "TR1_GPT_OCR_API_KEY": "ocr-key",
             },
@@ -153,7 +155,6 @@ class TestDocuments(unittest.TestCase):
         self.assertEqual(request.headers["Authorization"], "Bearer ocr-key")
         payload = json.loads(request.content)
         self.assertEqual(payload["model"], "env-model")
-        self.assertEqual(payload["max_output_tokens"], 12345)
 
     def test_custom_endpoint_requires_its_own_key_before_upload(self):
         self._mock_openai(lambda: _response(_PAGES))

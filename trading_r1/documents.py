@@ -114,7 +114,6 @@ def _transcribe(pdf: bytes, count: int, profile: ModelProfile) -> _Transcript:
                 instructions=_INSTRUCTIONS,
                 prompt=f"Transcribe all {count} pages, including any blank pages.",
                 response_schema=_Transcript.model_json_schema(),
-                max_tokens=32_768,
             )
         )
     except APIStatusError as err:

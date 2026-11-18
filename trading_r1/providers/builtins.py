@@ -234,7 +234,6 @@ def builtin_profiles() -> dict[str, dict[str, Any]]:
         "base_url": "https://api.openai.com/v1",
         "api_key_env": "OPENAI_API_KEY",
         "timeout_s": 300.0,
-        "output_limit": 32_768,
     }
     return profiles
 

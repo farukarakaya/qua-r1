@@ -132,7 +132,6 @@ class OpenAIProvider(Provider):
         instructions: str,
         prompt: str,
         response_schema: dict[str, Any],
-        max_tokens: int,
     ) -> Completion:
         """Send a whole PDF inline in one structured Responses call, without retries or tools."""
         data = base64.b64encode(pdf).decode("ascii")
@@ -159,7 +158,6 @@ class OpenAIProvider(Provider):
                     }
                 ],
                 store=False,
-                max_output_tokens=self.profile.capped(max_tokens),
                 text={
                     "format": {
                         "type": "json_schema",
