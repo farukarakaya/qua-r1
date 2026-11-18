@@ -4,7 +4,7 @@ Use `provider: "chat"` for a gateway or self-hosted server that implements the O
 
 ## Set up a model profile
 
-1. Copy the [example `.providers.json`](../.providers.json) to `~/.trading-r1/providers.json` (or `$TR1_HOME/providers.json` if set). If you already have that file, merge the `my-gateway` entry into its `profiles` object instead of overwriting it. The repo example is not loaded automatically. To use a file elsewhere, set `TR1_PROVIDERS_CONFIG` to its absolute path.
+1. Copy the [example `.providers.json`](../.providers.json) to `~/.trading-r1/providers.json` (or `$TR1_HOME/providers.json` if set). If you already have that file, merge the entries you want into its `profiles` object instead of overwriting it. Keep `gpt-ocr` only if you want a custom OCR endpoint. The repo example is not loaded automatically. To use a file elsewhere, set `TR1_PROVIDERS_CONFIG` to its absolute path.
 2. Replace `https://gateway.example/v1` with the gateway's API base URL and `your-model-id` with the model ID it serves. Use the base URL, not the full `/chat/completions` path.
 3. Set `GATEWAY_API_KEY` in the backend's environment or save it with the secret store:
 
@@ -26,6 +26,13 @@ If the terminal attaches to a separately running backend, that backend must also
 
 ## PDF OCR uses a separate endpoint
 
-`trading-r1 docs add` uses the `gpt-ocr` profile, not the chat or web-reader profile. Set `TR1_GPT_OCR_BASE_URL` and a dedicated `TR1_GPT_OCR_API_KEY` to use a custom endpoint; set `TR1_GPT_OCR_MODEL` if the endpoint serves a different model from the `gpt-6.1-luna` default.
+`trading-r1 docs add` uses the separate `gpt-ocr` entry in the [example `.providers.json`](../.providers.json). To use a custom OCR service, keep `provider` and `role` as shown, replace `https://ocr.example/v1` with the service's API base URL, and set `model` to a PDF-capable model it serves. Then store its own key and import a PDF:
+
+```sh
+trading-r1 secrets set TR1_GPT_OCR_API_KEY
+trading-r1 docs add report.pdf
+```
+
+`TR1_GPT_OCR_BASE_URL`, `TR1_GPT_OCR_MODEL`, and `TR1_GPT_OCR_API_KEY` can also be set in the environment. To use OpenAI instead, leave out the example `gpt-ocr` entry and omit the OCR overrides. The built-in profile uses `gpt-6.1-luna` and `OPENAI_API_KEY`.
 
 The OCR endpoint must support the OpenAI Responses API with inline PDF input and strict JSON-schema output. Chat Completions support alone is not enough. The entire PDF is sent on first import; an identical file reuses the saved local transcript.
