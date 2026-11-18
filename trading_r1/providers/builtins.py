@@ -228,7 +228,7 @@ def builtin_profiles() -> dict[str, dict[str, Any]]:
     # Explicit imports use their own profile, independent of the selected chat or reader model.
     profiles[PDF_OCR_PROFILE] = {
         "name": PDF_OCR_PROFILE,
-        "model": "gpt-4.1-mini",
+        "model": "gpt-6.1-luna",
         "provider": "openai-responses",
         "role": "ocr",
         "base_url": "https://api.openai.com/v1",

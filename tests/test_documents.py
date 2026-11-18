@@ -132,7 +132,7 @@ class TestDocuments(unittest.TestCase):
         (request,) = self.requests
         self.assertEqual(str(request.url), "https://api.openai.com/v1/responses")
         self.assertEqual(request.headers["Authorization"], "Bearer test-key")
-        self.assertEqual(json.loads(request.content)["model"], "gpt-4.1-mini")
+        self.assertEqual(json.loads(request.content)["model"], "gpt-6.1-luna")
         self.assertNotIn("gpt-ocr", {row["name"] for row in available_backbones()})
 
     def test_ocr_profile_uses_its_own_config(self):

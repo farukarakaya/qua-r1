@@ -45,7 +45,7 @@ trading-r1 docs add ~/Downloads/report.pdf ~/Downloads/another-report.pdf
 ```
 
 `docs add` needs no running backend. It sends the **entire PDF** in one request per new file
-using the dedicated `gpt-ocr` profile. That profile defaults to OpenAI and `gpt-4.1-mini`;
+using the dedicated `gpt-ocr` profile. That profile defaults to OpenAI and `gpt-6.1-luna`;
 it does not use your selected chat or web reader model. `--model` overrides the OCR model for
 this import. To configure it persistently, edit `profiles.gpt-ocr` in `providers.json` or set
 `TR1_GPT_OCR_MODEL`. If you set `TR1_GPT_OCR_BASE_URL` to another endpoint, supply its own
