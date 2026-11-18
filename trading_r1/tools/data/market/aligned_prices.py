@@ -6,9 +6,8 @@
 The cross-sectional feeder. The compute tools that pair series (correlation, beta, portfolio
 optimization and risk decomposition) pair them by position, so series fetched one by one, with
 different listing dates, holidays and calendars (crypto trades weekends; equities don't), can
-pair different days. This tool fetches each symbol in its own asset class (each on Tauric's one
-price basis for it: dividend-adjusted for listed securities, quoted otherwise) and keeps only the
-bars every symbol has, so `series` are equal-length and date-matched by construction.
+pair different days. This tool keeps only the bars every symbol has, so `series` are equal-length
+and date-matched by construction. Each series retains its provider's price basis.
 
 `periods_per_year` is the joined series' observed density (dates shared per year), capped at
 the most restrictive class calendar: a stock joined to crypto keeps only trading days, and
@@ -40,6 +39,7 @@ from trading_r1.contract.spec import (
 )
 from trading_r1.contract.units import Code, Count, Day, Fraction, Number, Price, Text
 from trading_r1.tools.compute.series import pct_returns
+from trading_r1.tools.data.bist import bist_ticker
 from trading_r1.tools.data.common import SymbolList
 from trading_r1.tools.data.pricing import (
     EQUITY,
@@ -68,8 +68,10 @@ _DESCRIPTION = (
     "prev:<id>.periods_per_year), beta (closes=prev:<id>.columns[0], benchmark_closes="
     "prev:<id>.columns[1]; `columns` follows the order of `symbols`, which also serves "
     "symbols with dots, like BRK.B). Bars a symbol has that another lacks (weekends for crypto, "
-    "holidays, dates before a listing) are dropped and counted; a symbol Tauric cannot serve is "
-    "reported and left out. Matching dates are not simultaneous closes (BTC's day ends at "
+    "holidays, dates before a listing) are dropped and counted. For BIST (XIST:THYAO or "
+    "THYAO.IS), use daily bars; if any symbol fails, the BIST basket fails. Otherwise a symbol "
+    "the provider cannot serve is reported and left out. Matching dates are not simultaneous "
+    "closes (BTC's day ends at "
     "midnight UTC; an FX value is the day's open snapshot), each series is in its own currency, "
     "and history is as deep as the shallowest symbol."
 )
@@ -90,6 +92,8 @@ class SymbolStats(BaseModel):
     asset_class: Code
     instrument_type: Code = None
     currency: Code = None
+    source: Text
+    price_basis: Code
     bars: Count  # the symbol's own bars in the window
     dropped: Count  # of them, the ones another symbol lacks
     period_return: Fraction  # over the shared window, on the symbol's own price basis
@@ -154,6 +158,9 @@ def calendar(classes: list[AssetClass], interval: str, dates: list[str]) -> floa
 
 
 async def _handler(req: AlignedPricesRequest) -> Result:
+    bist_tickers = [ticker for sym in req.symbols if (ticker := bist_ticker(sym))]
+    if len(set(bist_tickers)) != len(bist_tickers):
+        raise ToolError("Use only one spelling of each BIST ticker in a basket.")
     results = await asyncio.gather(
         *(fetch_bars(sym, req.period, req.interval, req.start, req.end) for sym in req.symbols),
         return_exceptions=True,
@@ -164,6 +171,8 @@ async def _handler(req: AlignedPricesRequest) -> Result:
     for r in results:
         if isinstance(r, BaseException) and not isinstance(r, ToolError):
             raise r  # not a data problem: let it surface
+    if bist_tickers and failed:
+        raise ToolError("Could not align the full BIST basket: " + "; ".join(failed.values()))
     fetched = {sym: r for sym, r in zip(req.symbols, results, strict=True) if sym not in failed}
     if len(fetched) < 2:
         raise ToolError("fewer than two symbols could be fetched: " + "; ".join(failed.values()))
@@ -184,6 +193,8 @@ async def _handler(req: AlignedPricesRequest) -> Result:
             "asset_class": classes[sym].label,
             "instrument_type": fetched[sym].instrument_type,
             "currency": fetched[sym].currency,
+            "source": fetched[sym].source,
+            "price_basis": fetched[sym].price_basis,
             "bars": len(rows[sym]),
             "dropped": len(rows[sym]) - len(dates),
             "period_return": series[sym][-1] / series[sym][0] - 1,
@@ -212,7 +223,10 @@ async def _handler(req: AlignedPricesRequest) -> Result:
         columns=[series[sym] for sym in symbols],  # positional: for dotted symbols
         simple_returns={sym: pct_returns(v) for sym, v in series.items()},
     )
-    return Result(out, Provenance(**provenance(subject=", ".join(symbols), as_of=dates[-1])))
+    sources = ", ".join(dict.fromkeys(b.source for b in fetched.values()))
+    return Result(
+        out, Provenance(**provenance(subject=", ".join(symbols), as_of=dates[-1], source=sources))
+    )
 
 
 SPEC = ToolSpec(

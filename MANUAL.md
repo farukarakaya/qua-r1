@@ -71,6 +71,20 @@ Sync is on by default with a Tauric key, whichever model you use: your sessions,
 questions, model requests and responses and tool results, are copied to your account at
 `api.tauric.ai`. Turn it off under *Settings > Session sync* or with `trading-r1 sync off`.
 
+## Borsa İstanbul price history
+
+From a source checkout, launch with `uv run --locked --extra bist trading-r1` to enable
+this optional provider. Ask for `XIST:THYAO` or `THYAO.IS` with the price or aligned-price tool. borsapy uses
+TradingView for daily OHLCV in TRY, excluding the current Istanbul session date. Weekly
+and monthly bars are resampled; intraday bars are not available. Closes are split-adjusted
+only, so returns exclude cash dividends. Tauric continues to serve U.S. stocks and other
+existing instruments; failed BIST requests do not switch providers.
+
+Use daily bars for cross-market baskets. Alignment matches dates, not closing times, and
+leaves prices in their listing currencies. Convert to a common currency before optimizing.
+Confirm that your data permissions cover your use of the feed under
+[TradingView's terms](https://www.tradingview.com/policies/).
+
 ## Your data and keys
 
 - `trading-r1 secrets set` and the key forms store keys in `~/.trading-r1/credentials.json`, and
