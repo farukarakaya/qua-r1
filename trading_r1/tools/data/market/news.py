@@ -1,8 +1,9 @@
 # Copyright 2026 Tauric Research
 # SPDX-License-Identifier: Apache-2.0
 
-"""data.market.news: Tauric's news store: the latest market news, one security's news, or a
-search by topic.
+"""data.market.news: the latest market news, one security's news, or a search by topic.
+
+Explicit BIST symbols get recent company disclosures from KAP via borsapy.
 
 Headline, publisher, time, link and Tauric's summary for each article, with its sentiment,
 impact and event types, so the model sees what is being reported and can `visit` a link for the
@@ -14,13 +15,14 @@ item: the basis is stated per item.
 from __future__ import annotations
 
 import datetime as dt
-from typing import Annotated, Literal
+import re
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
 from trading_r1.contract.spec import Output, Provenance, Result, ToolError, ToolSpec, hint
 from trading_r1.contract.units import Code
-from trading_r1.tools.data import articles
+from trading_r1.tools.data import articles, bist
 from trading_r1.tools.data.articles import NEWS_PAGE, Article, article
 from trading_r1.tools.data.common import Symbol
 from trading_r1.tools.data.tauric import Tauric, provenance
@@ -36,8 +38,12 @@ _DESCRIPTION = (
     "when Tauric discovered it), link, a short summary, and Tauric's read: sentiment, impact "
     "(low/medium/high) and event types. Each article is a numbered source [N] (`source`): "
     "cite it by that number, and open it with `visit` when the summary is not enough; the web "
-    "`search` covers what this store does not."
+    "`search` covers what this store does not. For BIST (XIST:THYAO or THYAO.IS), returns "
+    "recent KAP company disclosures instead; dates and optional title text filter this recent "
+    "feed, and sentiment is not supported."
 )
+# borsapy's KAP provider constructs disclosure links in this exact form.
+_KAP_LINK = re.compile(r"https://www\.kap\.org\.tr/tr/Bildirim/[0-9]+")
 
 
 class NewsRequest(BaseModel):
@@ -70,7 +76,71 @@ def _story(raw: dict) -> dict | None:
     return item
 
 
+def _disclosures(bp: Any, ticker: str, req: NewsRequest) -> list[dict[str, Any]]:
+    zone = bist.istanbul()
+    query = req.query.casefold() if req.query else None
+    items = []
+    seen: set[str] = set()
+    for row in bp.Ticker(ticker).news.to_dict("records"):
+        title, url = row.get("Title"), row.get("URL")
+        if (
+            not isinstance(title, str)
+            or not title.strip()
+            or (query and query not in title.casefold())
+        ):
+            continue
+        if not isinstance(url, str) or url in seen or not _KAP_LINK.fullmatch(url):
+            continue
+        try:
+            local = dt.datetime.strptime(row.get("Date"), "%d.%m.%Y %H:%M:%S")
+        except (TypeError, ValueError):
+            continue
+        published = local.replace(tzinfo=zone).astimezone(dt.UTC)
+        day = published.date()
+        if (req.start and day < req.start) or (req.end and day > req.end):
+            continue
+        seen.add(url)
+        items.append(
+            {
+                "title": title,
+                "url": url,
+                "published": published.isoformat().replace("+00:00", "Z"),
+                "publisher": "KAP",
+                "time_basis": "published",
+            }
+        )
+    items.sort(key=lambda item: item["published"], reverse=True)
+    return items[: req.limit]
+
+
+async def _bist_news(req: NewsRequest, ticker: str) -> Result:
+    if req.sentiment:
+        raise ToolError("KAP company disclosures do not support a sentiment filter.")
+    if req.start and req.end and req.start > req.end:
+        raise ToolError("Start must be on or before end.")
+    subject = f"XIST:{ticker}"
+    items = await bist.run(subject, "KAP disclosures", lambda bp: _disclosures(bp, ticker, req))
+    if not items:
+        raise ToolError(
+            f"No matching recent KAP disclosures for {subject}. The KAP feed is not a "
+            "historical archive; try `search` for older disclosures."
+        )
+    articles.number(items)
+    return Result(
+        NewsOutput(symbol=subject, query=req.query, items=items),
+        Provenance(
+            **provenance(
+                subject=subject,
+                as_of=items[0]["published"],
+                source="KAP (via borsapy)",
+            )
+        ),
+    )
+
+
 async def _handler(req: NewsRequest) -> Result:
+    if req.symbol and (ticker := bist.bist_ticker(req.symbol)):
+        return await _bist_news(req, ticker)
     window = {
         "since": req.start and f"{req.start.isoformat()}T00:00:00Z",
         "until": req.end and f"{req.end.isoformat()}T23:59:59.999999Z",
