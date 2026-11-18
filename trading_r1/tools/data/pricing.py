@@ -13,8 +13,8 @@ Ready-to-chain series are the primary composition surface: `closes` and `simple_
 instrument, and `closes` are that series: for listed securities it is adjusted for splits and
 dividends (a total-return basis; the last bar is the traded close and earlier levels sit below
 the prices that traded, by the dividends since), for indices, futures and crypto the quoted
-price. `period_return` is `total` on an adjusted series and `price` otherwise. Derived measures
-are standard ones only.
+price. BIST stocks use split-adjusted borsapy prices. `period_return` is `total` only on
+split- and dividend-adjusted series and `price` otherwise.
 
 The asset class follows from the resolved instrument, so every symbol is annualized on its own
 calendar.
@@ -48,6 +48,7 @@ from trading_r1.contract.units import Code, Count, Day, Fraction, Number, Price,
 from trading_r1.tools.compute.risk.volatility import realized_vol
 from trading_r1.tools.compute.series import pct_returns
 from trading_r1.tools.compute.technical.indicators import Cross, last_cross, sma_last
+from trading_r1.tools.data import bist
 from trading_r1.tools.data.common import is_num, months_back
 from trading_r1.tools.data.symbols import Instrument, resolve
 from trading_r1.tools.data.tauric import Tauric, provenance
@@ -163,13 +164,14 @@ def asset_class_for(kind: str | None) -> AssetClass | None:
 
 @dataclass(frozen=True)
 class Bars:
-    """A fetched history: the usable bars plus what Tauric says about the instrument."""
+    """A fetched history with its instrument metadata and price basis."""
 
     rows: list[dict[str, Any]]
     instrument: Instrument | None = None
     currency: str | None = None
     instrument_type: str | None = None
-    adjusted: bool = False  # closes adjusted for splits and dividends (a total-return basis)
+    price_basis: str = "quoted"
+    source: str = "Tauric"
     requested_start: str | None = None  # the start date a lookback asked for
     requested_sessions: int | None = None  # N, for an "Nd" window
     requested_end: str | None = None  # the last date a window ending in the past asked for
@@ -376,6 +378,8 @@ async def fetch_bars(
 ) -> Bars:
     """OHLCV bars for a symbol of any asset class a price tool serves: `period` counted back from
     `end` (or today), or from `start` when one is given."""
+    if ticker := bist.bist_ticker(symbol):
+        return await _bist_bars(ticker, period, interval, start, end)
     inst = resolve(symbol)
     if asset_class_for(inst.kind) is None:
         raise ToolError(f"no price tool serves {inst.key}")
@@ -424,11 +428,53 @@ async def fetch_bars(
         inst,
         currency=instrument.get("currency"),
         instrument_type=(instrument.get("classification") or {}).get("instrument_type"),
-        adjusted=body.get("price_basis") == "split_dividend_adjusted",
+        price_basis=(
+            "split_dividend_adjusted"
+            if body.get("price_basis") == "split_dividend_adjusted"
+            else "quoted"
+        ),
         requested_start=first_day,
         requested_sessions=sessions,
         requested_end=last_day if end and end < dt.date.today() else None,
         limits=tuple(api.limits),
+    )
+
+
+async def _bist_bars(
+    ticker: str, period: str, interval: str, start: dt.date | None, end: dt.date | None
+) -> Bars:
+    if interval in INTRADAY:
+        raise ToolError("BIST prices support daily, weekly, and monthly bars only.")
+    today = dt.datetime.now(bist.istanbul()).date()
+    last = min(end or today, today - dt.timedelta(days=1))
+    floor = today - dt.timedelta(days=bist.MAX_LOOKBACK_DAYS - 1)
+    first = start.isoformat() if start else window_start(period, end or today)
+    sessions = None if start else window_sessions(period)
+    earliest = dt.date.fromisoformat(first) if first else floor
+    if sessions and last >= floor:
+        earliest = last - dt.timedelta(days=sessions * 2 + 14)
+    if last < max(earliest, floor):
+        raise ToolError("No completed BIST sessions in the requested history window.")
+    rows, is_index = await bist.fetch_daily(ticker, max(earliest, floor), last)
+    if not rows:
+        raise ToolError(f"No {bist.SOURCE} bars for XIST:{ticker} in the requested window.")
+    notes: list[str] = []
+    if earliest < floor or (not first and not sessions):
+        notes.append(f"BIST history requests are limited to dates on or after {floor}.")
+    if sessions:
+        rows = rows[-sessions:]
+        if len(rows) < sessions:
+            notes.append(f"Only {len(rows)} of the requested {sessions} BIST sessions returned.")
+    return Bars(
+        resample(rows, interval),
+        resolve(f"XIST:{ticker}"),
+        currency=None if is_index else "TRY",
+        instrument_type="index" if is_index else None,
+        price_basis="quoted" if is_index else "split_adjusted",
+        source=bist.SOURCE,
+        requested_start=first,
+        requested_end=last.isoformat() if end and end < today else None,
+        limits=tuple(notes),
     )
 
 
@@ -579,7 +625,7 @@ class PriceOutput(Series):
 def price_response(symbol: str, bars: Bars, interval: str, asset: AssetClass) -> Result:
     rows = bars.rows
     intraday = interval in INTRADAY
-    income = bars.adjusted and not intraday
+    income = bars.price_basis == "split_dividend_adjusted" and not intraday
     closes = [r["close"] for r in rows]
     quoted = closes  # one price basis per instrument: levels and returns share it
     bars_per_year, per_session = annualization(asset, interval, [r["date"] for r in rows])
@@ -588,7 +634,9 @@ def price_response(symbol: str, bars: Bars, interval: str, asset: AssetClass) ->
     lo = min(range(len(quoted)), key=quoted.__getitem__)
     past = bars.requested_end is not None
     notes = [
-        "Levels and returns use the quoted close."
+        "Closes are split-adjusted only; returns exclude cash dividends."
+        if bars.price_basis == "split_adjusted"
+        else "Levels and returns use the quoted close."
         if not income
         else "Closes are adjusted for splits and dividends (total-return basis): the levels in a "
         "past window sit below the prices that traded then, by the dividends since; returns over "
@@ -624,7 +672,7 @@ def price_response(symbol: str, bars: Bars, interval: str, asset: AssetClass) ->
         asset_class=asset.label,
         instrument_type=bars.instrument_type,
         currency=bars.currency,
-        price_basis="split_dividend_adjusted" if bars.adjusted else "quoted",
+        price_basis=bars.price_basis,
         notes=notes,
         n_bars=len(rows),
         start_date=rows[0]["date"],
@@ -650,7 +698,9 @@ def price_response(symbol: str, bars: Bars, interval: str, asset: AssetClass) ->
         simple_returns=pct_returns(closes),
         bars=rows,
     )
-    return Result(out, Provenance(**provenance(subject=symbol, as_of=rows[-1]["date"])))
+    return Result(
+        out, Provenance(**provenance(subject=symbol, as_of=rows[-1]["date"], source=bars.source))
+    )
 
 
 def _starts_late(requested: str | None, first: str) -> bool:
