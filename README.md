@@ -35,29 +35,18 @@
 
 ## Quick start
 
-**1. Create a Tauric account and get an API key.** [Sign up](https://tauric.ai/signup), then
-[create a key](https://tauric.ai/settings/api-keys).
+To run the qua-r1 fork, use a source checkout with [uv](https://docs.astral.sh/uv/), Python 3.12+, and [Bun](https://bun.sh/) 1.3+ for the terminal UI. The checkout uses the fork's pinned borsapy build and exposes the `trading-r1` command.
 
-**2. Install.**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/TauricResearch/Trading-R1/main/install.sh | sh
+```sh
+git clone https://github.com/farukarakaya/qua-r1.git
+cd qua-r1
+uv sync --locked
+uv run trading-r1
 ```
 
-Or, with Python 3.12 or later and `bun`: `pip install trading-r1`.
+No API key is needed to open the terminal UI. For Tauric model or data access, [sign up](https://tauric.ai/signup), [create a key](https://tauric.ai/settings/api-keys), and run `uv run trading-r1 secrets set TAURIC_API_KEY`. You can also set `TAURIC_API_KEY` in the backend's environment.
 
-**3. Add your key and start.**
-
-```bash
-export TAURIC_API_KEY=your-key
-trading-r1
-```
-
-To store the key instead, run `trading-r1 secrets set TAURIC_API_KEY`, or press `/` in the app and
-choose *API keys…*.
-
-To uninstall, run `trading-r1 daemon uninstall` if you installed the service, then
-`uv tool uninstall trading-r1` or `pip uninstall trading-r1`. Your data stays in `~/.trading-r1` and your reports folder.
+Tauric is the default source for macro data and U.S. market data; no data-mode setting is needed. There are no direct FRED/ALFRED or TCMB EVDS3 adapters. For BIST price history and optional IstFin tools, see the [manual](MANUAL.md).
 
 ## Choose a model
 
@@ -70,16 +59,16 @@ To uninstall, run `trading-r1 daemon uninstall` if you installed the service, th
 | `vllm` | `Qwen3.8-27B` | a vLLM server you run |
 
 The app starts on the first you have set up, in the order OpenAI, Anthropic, Gemini, Tauric, vLLM.
-Change it with *Model…* in the palette, or start on one with `trading-r1 --profile gpt`. To point
+Change it with *Model…* in the palette, or start on one with `uv run trading-r1 --profile gpt`. To point
 `vllm` at your server, see [Configuration](MANUAL.md#configuration). For other OpenAI-compatible
 servers and gateways, see [Custom model endpoints](docs/custom-model-endpoints.md).
 
 ## Use it
 
 ```bash
-trading-r1                                          # open the terminal
-trading-r1 "What's NVDA's last quarterly revenue?"  # and ask a first question
-trading-r1 --mode analytical                        # start in a mode
+uv run trading-r1                                          # open the terminal
+uv run trading-r1 "What's NVDA's last quarterly revenue?"  # and ask a first question
+uv run trading-r1 --mode analytical                        # start in a mode
 ```
 
 | Key | Does |
@@ -127,7 +116,7 @@ Jobs ask a question on a schedule and send the report to your channels. Use *Sch
 the palette, or:
 
 ```bash
-trading-r1 jobs add --name "Morning brief" --every weekdays --time 08:00 --tz America/New_York \
+uv run trading-r1 jobs add --name "Morning brief" --every weekdays --time 08:00 --tz America/New_York \
     --prompt "What moved my watchlist overnight? NVDA, AAPL, MSFT." --deliver email,telegram
 ```
 
@@ -141,10 +130,36 @@ keep one running, install a user service (Linux with systemd, macOS with launchd
 service…* in the palette or:
 
 ```bash
-trading-r1 daemon install      # also: status, logs, start, stop, restart, uninstall
+uv run trading-r1 daemon install  # also: status, logs, start, stop, restart, uninstall
 ```
 
-After you update, or change a key in your shell profile, run `trading-r1 daemon install` again.
+After you update, or change a key in your shell profile, run `uv run trading-r1 daemon install` again.
+
+## Local development
+
+From the repository root:
+
+```sh
+uv sync --locked
+make test     # Offline Python tests
+make smoke    # CLI version/help, backend /livez, and TUI typecheck
+make lint     # Ruff and Biome checks
+```
+
+No API keys are needed. `make smoke` and `make lint` need Bun. If you have npm but no `bun` on `PATH`, run `npm exec --yes --package=bun@1.4.4 -- make smoke`. The same prefix works for `make lint` and `uv run trading-r1`.
+
+### Test the backend with auto-reload
+
+```sh
+dev_home=$(mktemp -d)
+TR1_HOME="$dev_home" TR1_PORT=8765 make dev
+```
+
+In another terminal, run `curl -fsS http://127.0.0.1:8765/livez`. A response with `"status":"ok"` confirms the server is up, not that providers are configured. The reload server binds to loopback and skips authentication and the scheduler. Stop it with `Ctrl+C` before deleting the temporary state directory. To test normal backend behavior, run `uv run trading-r1 serve` instead.
+
+### Test the terminal UI
+
+Run `uv run trading-r1` to start or reuse a regular backend. To attach to the reload server instead, run `TR1_API_URL=http://127.0.0.1:8765 uv run trading-r1` while `make dev` is running. For an actual research prompt, configure a model first, for example with `uv run trading-r1 secrets set OPENAI_API_KEY`, then select it via *Model…*. Use the same `TR1_HOME` when storing credentials for an isolated backend.
 
 ## Manual
 
