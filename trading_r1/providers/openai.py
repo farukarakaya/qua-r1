@@ -18,10 +18,13 @@ verbatim, which keeps the encrypted reasoning chain intact across tool calls.
 
 from __future__ import annotations
 
+import base64
+from contextlib import nullcontext
 from typing import Any
 
 from trading_r1.providers.base import (
     AssistantTurn,
+    Completion,
     DeltaCallback,
     Provider,
     ToolCall,
@@ -121,6 +124,53 @@ class OpenAIProvider(Provider):
 
     # a 400 with code `context_length_exceeded`
     overflow_signatures = ("exceeds the context window", "context_length_exceeded")
+
+    async def complete_pdf(
+        self,
+        pdf: bytes,
+        *,
+        instructions: str,
+        prompt: str,
+        response_schema: dict[str, Any],
+    ) -> Completion:
+        """Send a whole PDF inline in one structured Responses call, without retries or tools."""
+        data = base64.b64encode(pdf).decode("ascii")
+        client = (
+            client_for(self.profile)
+            if self.client is None
+            else nullcontext(self.client.with_options(max_retries=0))
+        )
+        async with client as cl:
+            response = await cl.responses.create(
+                model=self.profile.model,
+                instructions=instructions,
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_file",
+                                "filename": "source.pdf",
+                                "file_data": f"data:application/pdf;base64,{data}",
+                            },
+                            {"type": "input_text", "text": prompt},
+                        ],
+                    }
+                ],
+                store=False,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "output",
+                        "strict": True,
+                        "schema": response_schema,
+                    }
+                },
+            )
+        record_openai(self.profile.name, response)
+        return Completion(
+            response.output_text, "stop" if response.status == "completed" else "error"
+        )
 
     async def generate(
         self,

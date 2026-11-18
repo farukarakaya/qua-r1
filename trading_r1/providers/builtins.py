@@ -25,6 +25,8 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+PDF_OCR_PROFILE = "gpt-ocr"
+
 _TAURIC_BASE_URL = "https://api.tauric.ai/v1"
 _ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 _VLLM_BASE_URL = "http://127.0.0.1:8000/v1"
@@ -222,7 +224,18 @@ BUILTIN_PROVIDERS: tuple[BuiltinProvider, ...] = (
 
 def builtin_profiles() -> dict[str, dict[str, Any]]:
     """Every provider's profile specs, by profile name."""
-    return {name: spec for b in BUILTIN_PROVIDERS for name, spec in b.profiles().items()}
+    profiles = {name: spec for b in BUILTIN_PROVIDERS for name, spec in b.profiles().items()}
+    # Explicit imports use their own profile, independent of the selected chat or reader model.
+    profiles[PDF_OCR_PROFILE] = {
+        "name": PDF_OCR_PROFILE,
+        "model": "gpt-6.1-luna",
+        "provider": "openai-responses",
+        "role": "ocr",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "timeout_s": 300.0,
+    }
+    return profiles
 
 
 def supplied_provider(

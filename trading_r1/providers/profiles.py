@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from trading_r1.providers.builtins import builtin_profiles, supplied_provider
 from trading_r1.state import credentials
@@ -89,9 +89,9 @@ class ModelProfile(BaseModel):
     # = the OpenAI Responses API (native reasoning summaries + stateless threading);
     # "gemini" = the native google-genai SDK. Selects the provider via provider_for().
     provider: Literal["chat", "openai-responses", "gemini", "anthropic"] = "chat"
-    # Role in the harness: a "backbone" drives the ReAct loop (and is switchable via
-    # /model); a "reader" is the page-reading model and is never a loop backbone.
-    role: Literal["backbone", "reader"] = "backbone"
+    # Only a "backbone" drives the ReAct loop and appears in /model. A "reader" reads
+    # web pages, and an "ocr" profile is for explicit document imports.
+    role: Literal["backbone", "reader", "ocr"] = "backbone"
     # The reader (page-extraction) profile to pair with this backbone. A run needs one: a
     # backbone that declares none is refused. Cloud backbones name a cloud reader so a run never
     # depends on the local reader being served; some backbones read their own pages (gemini).
@@ -208,8 +208,12 @@ def load_profiles(
             spec = {**spec, "api_key_env": "OPENAI_API_KEY"}  # no address: it is OpenAI's own
         try:
             profiles[name] = ModelProfile(**spec)
-        except ValueError as err:  # pydantic's validation error
-            raise ProfileSelectionError(f"profile {name!r} is invalid: {err}") from err
+        except ValidationError as err:
+            # Profile input may contain credentials. Report field names, never their values.
+            fields = [".".join(map(str, item["loc"])) for item in err.errors(include_input=False)]
+            raise ProfileSelectionError(
+                f"profile {name!r}: invalid field(s): {', '.join(fields)}"
+            ) from None
     return profiles
 
 
@@ -291,7 +295,7 @@ def available_backbones(
     env: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The selectable backbones (``role == "backbone"``) with presentation metadata and
-    config-level credential status; page readers are excluded. Rows come in a stable
+    config-level credential status; auxiliary profiles are excluded. Rows come in a stable
     display order (:attr:`DisplayMeta.order`) independent of readiness, so the picker never
     reshuffles between openings. ``configured`` means the backbone *can be built* (keyless
     local, or its API key resolves); live reachability (``ready``) is layered on by the
@@ -300,7 +304,7 @@ def available_backbones(
     e = env if env is not None else credentials.overlay()
     rows: list[dict[str, Any]] = []
     for p in load_profiles(path=path, env=e).values():
-        if p.role != "backbone":  # readers are paired internally, not user-selectable
+        if p.role != "backbone":
             continue
         d = p.display or DisplayMeta()
         keyless = p.api_key_literal is not None or p.api_key_env is None

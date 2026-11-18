@@ -8,6 +8,7 @@ trading-r1 "NVDA DCF value?"     # the TUI, seeded with a first question
 trading-r1 --profile vllm        # the TUI on a given backbone (/model switches later)
 trading-r1 serve                 # the HTTP+SSE backend alone (development)
 trading-r1 export SESSION        # write a session's report to a file
+trading-r1 docs add PDF          # transcribe and store a research PDF
 trading-r1 jobs | channels | secrets | daemon | sync | sessions   # subcommands, in cli/*.py
 
 ``main`` is the console-script entry point. Exit status is 0 on success and non-zero when a
@@ -30,6 +31,7 @@ from trading_r1.runtime.modes import MODES
 _SUBCOMMANDS = {
     "serve": "trading_r1.cli.backend",
     "export": "trading_r1.cli.export",
+    "docs": "trading_r1.cli.documents",
     "jobs": "trading_r1.cli.jobs",
     "channels": "trading_r1.cli.channels",
     "secrets": "trading_r1.cli.credentials",
