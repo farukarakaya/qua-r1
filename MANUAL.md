@@ -9,6 +9,7 @@ Each command takes `--help`, which also lists the less common commands and optio
 | `trading-r1 [QUESTION]` | Open the terminal. `--profile NAME`, `--mode MODE` |
 | `trading-r1 serve` | Run the backend alone, in the foreground |
 | `trading-r1 export ID` | Write a report. `--format pdf\|md\|html`, `-o FILE`, `--send CHANNELS` |
+| `trading-r1 docs add PDF [PDF ...]` | Send new PDFs to OpenAI for OCR and save the transcripts locally |
 | `trading-r1 sessions list`, `delete ID` | Your sessions; delete one here and its copy in your account |
 | `trading-r1 channels add KIND`, `list`, `test NAME`, `remove NAME` | Your channels |
 | `trading-r1 jobs add`, `list`, `run ID`, `runs ID`, `remove ID` | Your scheduled reports, and what each run did |
@@ -35,6 +36,24 @@ Open **Settings** from the palette.
 | Also save as Markdown, HTML page | Files saved beside a report's PDF. | Markdown on, page off |
 | Session sync | Copy your sessions to your Tauric account. | on |
 | Remembered notes… | View or delete what the agent has noted about you. | |
+
+## Import research PDFs
+
+```bash
+trading-r1 secrets set OPENAI_API_KEY
+trading-r1 docs add ~/Downloads/report.pdf ~/Downloads/another-report.pdf
+```
+
+`docs add` needs no running backend. It sends the **entire PDF** to OpenAI in one request per new
+file, using `gpt-4.1-mini` by default (`--model` overrides it). Only import documents you can share
+with OpenAI. Each input must fit the 20 MiB limit and the model's input and output limits.
+
+The command prints the path to `~/.trading-r1/docs/<sha256>.json` (under `TR1_HOME` if set). The JSON
+contains numbered pages with Markdown text, including tables where the model could read them.
+Re-adding identical bytes reuses the local copy, even if the file was renamed. Changed bytes count
+as a new document. Failed or incomplete responses are not saved or retried automatically.
+The original PDF is unchanged. Transcripts are not part of session sync or automatically used in
+research chat yet. Check material figures against the source; OCR can misread tables and numbers.
 
 ## Reports, channels and jobs
 
