@@ -48,6 +48,7 @@ async def run_research(
     policy: RunPolicy = RunPolicy.INTERACTIVE,
     delivery: str = "",
     sources: list[dict[str, Any]] | None = None,
+    document_context: str = "",
 ) -> dict[str, Any]:
     """Run a deep-research trajectory end-to-end and return it (with citations).
 
@@ -77,9 +78,17 @@ async def run_research(
     cache = FetchCache()
     cache.seed([Citation(**source) for source in sources or []])  # a conversation's numbers last
     skills = default_skill_registry()
+    if policy is not RunPolicy.INTERACTIVE:
+        document_context = ""
     agent = Agent(
         profile=profile,
-        registry=build_tool_registry(cache, reader_profile, client=client, config=config),
+        registry=build_tool_registry(
+            cache,
+            reader_profile,
+            client=client,
+            config=config,
+            use_documents=bool(document_context),
+        ),
         config=config,
         client=client,
         finalize=citation_finalizer(cache),
@@ -99,7 +108,9 @@ async def run_research(
         delivery=delivery,
     )
     with source_scope(cache):
-        traj = await agent.run(question, on_event=on_event, history=history)
+        traj = await agent.run(
+            question, on_event=on_event, history=history, reference_data=document_context
+        )
     traj["citations"] = [
         {"index": c.index, "url": c.url, "title": c.title, "record": c.record}
         for c in cache.citations

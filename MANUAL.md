@@ -55,11 +55,23 @@ and output limits. The importer does not set an output-token cap. See [custom OC
 for API requirements.
 
 The command prints the path to `~/.trading-r1/docs/<sha256>.json` (under `TR1_HOME` if set). The JSON
-contains numbered pages with Markdown text, including tables where the model could read them.
-Re-adding identical bytes reuses the local copy, even if the file was renamed. Changed bytes count
-as a new document. Failed or incomplete responses are not saved or retried automatically.
-The original PDF is unchanged. Transcripts are not part of session sync or automatically used in
-research chat yet. Check material figures against the source; OCR can misread tables and numbers.
+contains a whole-report summary and numbered Markdown pages, including tables where the model
+could read them. Both come from the same request. Re-adding identical bytes reuses the local copy,
+even if the file was renamed. Older transcripts remain readable without a summary. Failed or
+incomplete responses are not saved or retried automatically. The original PDF is unchanged.
+
+### Use imported reports in research
+
+Open the `/` palette and select **New session with PDFs…**. Then ask a normal research question,
+such as “Which Turkish stocks have the strongest analyst recommendations?” You do not need to name
+a PDF. The agent sees report summaries automatically and can use `read_doc` to open and cite pages.
+The catalog says when it cannot fit all reports. Large transcripts can be read in page ranges.
+Check material figures against the original PDF; OCR can misread tables and numbers.
+
+The selected model receives the summary catalog and any page text it reads. Document sessions
+are not enrolled in session sync; model requests and results are still logged locally. Use a
+regular new session to ask without the library. For the authenticated `/research` API, use a new
+`session_id` prefixed with `docs-` and reuse it for follow-ups. Other session IDs do not load PDFs.
 
 ## Reports, channels and jobs
 

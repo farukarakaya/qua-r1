@@ -27,6 +27,7 @@ from trading_r1.runtime.session.store import SessionStore, default_sessions_dir
 from trading_r1.scheduler import JobStore, Scheduler
 from trading_r1.service import preferences
 from trading_r1.service.syncing import SyncRuntime
+from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX, catalog_context
 
 _LOG = logging.getLogger(__name__)
 
@@ -81,10 +82,19 @@ def sync_kick() -> None:
         sync().kick()
 
 
-def prompt_overhead_of(session_id: str | None, mode: str | None = None) -> int:
+def prompt_overhead_of(
+    session_id: str | None, mode: str | None = None, document_context: str | None = None
+) -> int:
     """What the next request of a session carries beside its history."""
+    if document_context is None:
+        use_documents = bool(session_id and session_id.startswith(DOCUMENT_SESSION_PREFIX))
+        document_context = catalog_context() if use_documents else ""
     return prompt_overhead(
-        SESSIONS.history(session_id), skills=default_skill_registry(), mode=mode, memory=MEMORY
+        SESSIONS.history(session_id),
+        skills=default_skill_registry(),
+        mode=mode,
+        memory=MEMORY,
+        document_context=document_context,
     )
 
 

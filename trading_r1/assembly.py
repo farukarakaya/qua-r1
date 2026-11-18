@@ -32,6 +32,7 @@ from trading_r1.state.runtime_config import RuntimeConfig
 from trading_r1.tools.compute import COMPUTE_SPECS
 from trading_r1.tools.compute.arithmetic import SPEC as CALC_SPEC
 from trading_r1.tools.core.plan import SPEC as PLAN_SPEC
+from trading_r1.tools.core.read_doc import SPEC as READ_DOC_SPEC
 from trading_r1.tools.data.equity import EQUITY_DATA_SPECS
 from trading_r1.tools.data.macro import MACRO_DATA_SPECS
 from trading_r1.tools.data.market import MARKET_DATA_SPECS
@@ -50,23 +51,26 @@ def build_tool_registry(
     fetcher: Fetcher | None = None,
     client: Any | None = None,
     config: RuntimeConfig | None = None,
+    use_documents: bool = False,
 ) -> ToolRegistry:
-    """Every built-in tool: the research trio, exact arithmetic and the plan as core tools, and the
-    deferred equity, market and macro data and compute tools."""
+    """Core research tools, plus deferred equity, market, macro and compute tools."""
     registry = build_research_registry(
         cache, reader_profile, engine=engine, fetcher=fetcher, client=client, config=config
     )
     registry.register(CALC_SPEC)  # core: exact arithmetic so the model never computes in its head
     registry.register(PLAN_SPEC)  # core: a live research plan/checklist for multi-step work
+    if use_documents:
+        registry.register(READ_DOC_SPEC)
     for spec in (*EQUITY_DATA_SPECS, *MARKET_DATA_SPECS, *MACRO_DATA_SPECS, *COMPUTE_SPECS):
         registry.register(spec)
     return registry
 
 
-def catalog_tool_registry() -> ToolRegistry:
-    """Every built-in tool, for catalog views (the /capabilities endpoint): a fresh cache and the
-    default reader, no run state."""
-    return build_tool_registry(FetchCache(), get_profile("vllm-reader", env={}))
+def catalog_tool_registry(*, use_documents: bool = False) -> ToolRegistry:
+    """A tool catalog with a fresh cache and default reader, no run state."""
+    return build_tool_registry(
+        FetchCache(), get_profile("vllm-reader", env={}), use_documents=use_documents
+    )
 
 
 def build_run_registry(
@@ -180,12 +184,13 @@ def prompt_overhead(
     skills: SkillRegistry,
     mode: str | None = None,
     memory: MemoryStore | None = None,
+    document_context: str = "",
 ) -> int:
     """The tokens a session's next request carries beside its history: the system prompt and the
     schemas of the core tools and of those its history loaded."""
     session = ToolSessionState()
     registry = build_run_registry(
-        catalog_tool_registry(),
+        catalog_tool_registry(use_documents=bool(document_context)),
         skills,
         session,
         SkillSessionState(),
@@ -199,5 +204,8 @@ def prompt_overhead(
         mode=get_mode(mode),
         memory=memory.block() if memory else "",
     )
-    system = estimate_tokens([{"role": "system", "content": prompt}])
-    return system + schema_tokens(session.visible_schemas(registry))
+    overhead = estimate_tokens([{"content": prompt}])
+    overhead += schema_tokens(session.visible_schemas(registry))
+    if document_context:
+        overhead += estimate_tokens([{"content": document_context}])
+    return overhead
