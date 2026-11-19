@@ -71,9 +71,8 @@ _PRESET_DAYS = {
     "5y": 5 * 366,
     "10y": 10 * 366,
 }
-# The longest daily window one response carries, by instrument kind, and the periods it serves.
-_PAGE = {"security": "1y", "future": "1y", "index": "6mo", "fx": "6mo", "crypto": "6mo"}
-_PAGE_PERIODS = (("1mo", 31), ("3mo", 92), ("6mo", 183), ("1y", 366))
+# The longest daily window one response carries, in calendar days, by instrument kind.
+_PAGE_DAYS = {"security": 365, "future": 365, "index": 182, "fx": 182, "crypto": 182}
 _MAX_PAGES = 15  # a backstop: fifteen years at a year a page
 
 
@@ -308,13 +307,12 @@ def window_sessions(period: str) -> int | None:
     return count if unit == "d" else None
 
 
-def _first_period(kind: str, days: float) -> str:
-    """The smallest period one response serves that covers `days`, within the kind's page."""
-    page = _PAGE[kind]
-    for name, span in _PAGE_PERIODS:
-        if span >= days or name == page:
-            return name
-    return page
+def _bars(body: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = body.get("data")
+    if isinstance(rows, list):
+        return rows
+    legacy = body.get("bars")
+    return legacy if isinstance(legacy, list) else []
 
 
 def _row(b: dict[str, Any], *, fx: bool, intraday: bool) -> dict[str, Any] | None:
@@ -380,6 +378,8 @@ async def fetch_bars(
     `end` (or today), or from `start` when one is given."""
     if ticker := bist.bist_ticker(symbol):
         return await _bist_bars(ticker, period, interval, start, end)
+    if base := bist.try_fx_base(symbol):
+        return await _bist_fx_bars(base, period, interval, start, end)
     inst = resolve(symbol)
     if asset_class_for(inst.kind) is None:
         raise ToolError(f"no price tool serves {inst.key}")
@@ -478,22 +478,67 @@ async def _bist_bars(
     )
 
 
+async def _bist_fx_bars(
+    base: str, period: str, interval: str, start: dt.date | None, end: dt.date | None
+) -> Bars:
+    if interval in INTRADAY:
+        raise ToolError("TRY FX pairs support daily, weekly, and monthly bars only.")
+    today = dt.datetime.now(bist.istanbul()).date()
+    last = min(end or today, today)
+    floor = today - dt.timedelta(days=bist.MAX_LOOKBACK_DAYS - 1)
+    first = start.isoformat() if start else window_start(period, last)
+    sessions = None if start else window_sessions(period)
+    earliest = dt.date.fromisoformat(first) if first else floor
+    if sessions and last >= floor:
+        earliest = last - dt.timedelta(days=sessions * 2 + 14)
+    if last < max(earliest, floor):
+        raise ToolError("No FX sessions in the requested history window.")
+    rows = await bist.fetch_fx_daily(base, max(earliest, floor), last)
+    if not rows:
+        raise ToolError(f"No {bist.FX_SOURCE} bars for {base}TRY in the requested window.")
+    notes: list[str] = []
+    if earliest < floor or (not first and not sessions):
+        notes.append(f"TRY FX history requests are limited to dates on or after {floor}.")
+    if sessions:
+        rows = rows[-sessions:]
+        if len(rows) < sessions:
+            notes.append(f"Only {len(rows)} of the requested {sessions} FX sessions returned.")
+    pair = f"{base}TRY"
+    return Bars(
+        resample(rows, interval),
+        Instrument("fx", f"fx:{pair}", f"/fx/{pair}", pair),
+        currency="TRY",
+        price_basis="quoted",
+        source=bist.FX_SOURCE,
+        requested_start=first,
+        requested_end=last.isoformat() if end and end < today else None,
+        limits=tuple(notes),
+    )
+
+
 async def _intraday_pages(
     api: Tauric, inst: Instrument, interval: str, sessions: int, end: str | None
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Intraday bars for the `sessions` up to `end`, paged backwards through
-    `coverage.continue_end`. Oldest first."""
+    `coverage.continue_end` or the previous calendar window. Oldest first."""
     page = INTRADAY[interval].page_sessions
     first: dict[str, Any] = {}
     raw: list[dict[str, Any]] = []
+    page_end = end
     for served in range(0, sessions, page):
+        want = min(page, sessions - served)
+        end_day = _day(page_end)
+        page_start = (end_day - dt.timedelta(days=want * 2 + 4)).isoformat()
         body = await api.get(
-            f"{inst.path}/history", interval=interval, days=min(page, sessions - served), end=end
+            f"{inst.path}/history", interval=interval, start=page_start, end=page_end
         )
         first = first or body
-        raw = (body.get("bars") or []) + raw
-        end = (body.get("coverage") or {}).get("continue_end")
-        if not end:
+        rows = _bars(body)
+        if not rows:
+            break
+        raw = rows + raw
+        page_end = (body.get("coverage") or {}).get("continue_end")
+        if not page_end:
             break
     return first, raw
 
@@ -506,28 +551,46 @@ async def _daily_pages(
     days: float,
     end: str | None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Daily bars for a window up to `end`, paged backwards through `coverage.continue_end` until
-    the window's start (or its session count) is covered or the history ends. Oldest first."""
+    """Daily bars for a window up to `end`, paged backwards with `start`/`end` (and
+    `coverage.continue_end` for unbounded windows) until the window's start or session count
+    is covered or the history ends. Oldest first."""
     bars: dict[str, dict[str, Any]] = {}
     first: dict[str, Any] = {}
+    page_days = _PAGE_DAYS[inst.kind]
+    page_end = end
     for _ in range(_MAX_PAGES):
-        body = await api.get(
-            f"{inst.path}/history",
-            period=_first_period(inst.kind, days) if not first else _PAGE[inst.kind],
-            end=end,
-        )
+        if start is not None:
+            floor = (_day(page_end) - dt.timedelta(days=page_days)).isoformat()
+            page_start: str | None = max(start, floor)
+        elif sessions is not None:
+            span = min(page_days, max(sessions * 2 + 14, 30))
+            page_start = (_day(page_end) - dt.timedelta(days=span)).isoformat()
+        else:
+            page_start = None
+        body = await api.get(f"{inst.path}/history", start=page_start, end=page_end)
         first = first or body
-        for b in body.get("bars") or []:
+        rows = _bars(body)
+        for b in rows:
             bars.setdefault(b["date"], b)
-        end = (body.get("coverage") or {}).get("continue_end")
         usable = sum(
             _row(b, fx=inst.kind == "fx", intraday=False) is not None for b in bars.values()
         )
-        # `continue_end` is the day before the page's first date: a start on or after it is covered
-        if not end or not body.get("bars") or (start is not None and end < start):
+        if not rows:
             break
         if sessions is not None and usable >= sessions:
             break
+        continue_end = (body.get("coverage") or {}).get("continue_end")
+        if continue_end:
+            next_end: str | None = continue_end
+        elif page_start is not None and (
+            (start is not None and page_start > start) or sessions is not None
+        ):
+            next_end = (dt.date.fromisoformat(page_start) - dt.timedelta(days=1)).isoformat()
+        else:
+            next_end = None
+        if not next_end or (start is not None and next_end < start):
+            break
+        page_end = next_end
     return first, [bars[d] for d in sorted(bars)]
 
 
@@ -651,7 +714,7 @@ def price_response(symbol: str, bars: Bars, interval: str, asset: AssetClass) ->
         )
     if bars.instrument and bars.instrument.note:
         notes.append(bars.instrument.note + ".")
-    if asset.caveat:
+    if asset.caveat and bars.source == "Tauric":
         notes.append(asset.caveat)
     if bars.instrument_type == "rate":
         notes.append(f"{symbol} is a yield in percent: returns are relative changes in the yield.")

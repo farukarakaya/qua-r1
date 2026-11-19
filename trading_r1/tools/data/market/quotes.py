@@ -76,10 +76,15 @@ class MarketQuotesOutput(Output):
 def _quote(q: dict[str, Any]) -> Quote:
     day = q.get("day") or {}
     span = q.get("range_52w") or {}
+    raw_change = q.get("change")
+    if isinstance(raw_change, dict):
+        change, change_pct = raw_change.get("absolute"), raw_change.get("percent")
+    else:
+        change, change_pct = raw_change, q.get("change_percent")
     return Quote(
         price=q.get("price"),
-        change=q.get("change"),
-        change_pct=q.get("change_percent"),
+        change=change,
+        change_pct=change_pct,
         previous_close=(q.get("previous_close") or {}).get("value"),
         day_high=day.get("high"),
         day_low=day.get("low"),
@@ -88,9 +93,48 @@ def _quote(q: dict[str, Any]) -> Quote:
         low_52w=span.get("low"),
         currency=(q.get("instrument") or {}).get("currency"),
         market_state=q.get("market_state"),
-        as_of=q.get("source_time"),
+        as_of=q.get("price_time") or q.get("source_time"),
         session_date=q.get("session_date"),
     )
+
+
+def _quote_map(body: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(body, dict):
+        return {}
+    if isinstance(raw := body.get("data"), list):
+        mapped: dict[str, dict[str, Any]] = {}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("key") or (item.get("instrument") or {}).get("key")
+            if isinstance(key, str) and key:
+                mapped[key] = item
+        return mapped
+    return body["quotes"] if isinstance(body.get("quotes"), dict) else {}
+
+
+def _error_map(body: Any) -> dict[str, str]:
+    if not isinstance(body, dict):
+        return {}
+    raw = body.get("errors")
+    if isinstance(raw, list):
+        mapped: dict[str, str] = {}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("key")
+            err = item.get("error")
+            msg = err.get("message") if isinstance(err, dict) else item.get("message")
+            if isinstance(key, str) and isinstance(msg, str) and msg:
+                mapped[key] = msg
+        return mapped
+    if isinstance(raw, dict):
+        return {
+            key: err["message"]
+            for key, err in raw.items()
+            if isinstance(err, dict) and isinstance(err.get("message"), str)
+        }
+    return {}
 
 
 def _bist_quote(bp: Any, ticker: str) -> Quote | None:
@@ -118,10 +162,34 @@ def _bist_quote(bp: Any, ticker: str) -> Quote | None:
     )
 
 
+def _bist_fx_quote(bp: Any, base: str) -> Quote | None:
+    info = bp.FX(base).current
+    if not isinstance(info, dict):
+        return None
+    last = info.get("last")
+    if not is_num(last) or not math.isfinite(last) or last <= 0:
+        return None
+    as_of = None
+    stamp = info.get("update_time")
+    if isinstance(stamp, dt.datetime):
+        zone = stamp.tzinfo or bist.istanbul()
+        as_of = stamp.replace(tzinfo=zone).astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
+    elif isinstance(stamp, str) and stamp.strip():
+        as_of = stamp.strip()
+    return Quote(
+        price=last,
+        day_high=info.get("high"),
+        day_low=info.get("low"),
+        currency="TRY",
+        as_of=as_of,
+    )
+
+
 async def _handler(req: MarketQuotesRequest) -> Result:
     asked: dict[str, list[str]] = {}  # instrument key to the spellings asked
     labels: dict[str, str] = {}
     tickers: dict[str, str] = {}
+    fx_bases: dict[str, str] = {}
     left_out: dict[str, str] = {}
     notes: list[str] = []
     for symbol in req.symbols:
@@ -130,6 +198,10 @@ async def _handler(req: MarketQuotesRequest) -> Result:
                 label = f"XIST:{ticker}"
                 key = f"security:{label}"
                 tickers[key] = ticker
+            elif base := bist.try_fx_base(symbol):
+                label = f"{base}TRY"
+                key = f"fx:{label}"
+                fx_bases[key] = base
             else:
                 inst = resolve(symbol)
                 if inst.note and inst.note not in notes:
@@ -145,27 +217,31 @@ async def _handler(req: MarketQuotesRequest) -> Result:
         raise ToolError("no symbol could be quoted: " + "; ".join(left_out.values()))
 
     body, tauric_error = {}, None
-    if keys := [key for key in asked if key not in tickers]:
+    if keys := [key for key in asked if key not in tickers and key not in fx_bases]:
         try:
             async with Tauric() as api:
                 body = await api.post("/quotes", {"instruments": keys})
             notes += api.limits
         except ToolError as err:
-            if not tickers:
+            if not tickers and not fx_bases:
                 raise
             tauric_error = str(err)
-    data, errors = body.get("quotes") or {}, body.get("errors") or {}
+    data, errors = _quote_map(body), _error_map(body)
 
+    local_calls = [
+        *(
+            (key, bist.run(labels[key], "quote", lambda bp, t=ticker: _bist_quote(bp, t)))
+            for key, ticker in tickers.items()
+        ),
+        *(
+            (key, bist.run(labels[key], "FX quote", lambda bp, b=base: _bist_fx_quote(bp, b)))
+            for key, base in fx_bases.items()
+        ),
+    ]
     native = dict(
         zip(
-            tickers,
-            await asyncio.gather(
-                *(
-                    bist.run(labels[key], "quote", lambda bp, t=ticker: _bist_quote(bp, t))
-                    for key, ticker in tickers.items()
-                ),
-                return_exceptions=True,
-            ),
+            (key for key, _ in local_calls),
+            await asyncio.gather(*(call for _, call in local_calls), return_exceptions=True),
             strict=True,
         )
     )
@@ -180,11 +256,11 @@ async def _handler(req: MarketQuotesRequest) -> Result:
                 why, quote = str(quote), None
             elif isinstance(quote, BaseException):
                 raise quote
-            source = bist.SOURCE
+            source = bist.FX_SOURCE if key in fx_bases else bist.SOURCE
         else:
             raw = data.get(key) or {}
             quote = _quote(raw) if raw.get("price") is not None else None
-            why = tauric_error or (errors.get(key) or {}).get("message")
+            why = tauric_error or errors.get(key)
             source = "Tauric"
         if quote is not None:
             # two instruments can share a label (a stock and a currency pair): the key tells apart
