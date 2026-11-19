@@ -200,7 +200,11 @@ async def _handler(req: AlignedPricesRequest) -> Result:
         for sym in symbols
     }
     # a class's basis note (a future's roll, a yield index's units) holds here as in its tool
-    notes = dict.fromkeys(c.caveat for c in classes.values() if c.caveat)
+    notes = dict.fromkeys(
+        classes[sym].caveat
+        for sym in symbols
+        if classes[sym].caveat and fetched[sym].source == "Tauric"
+    )
     notes.update(
         dict.fromkeys(
             b.instrument.note for b in fetched.values() if b.instrument and b.instrument.note

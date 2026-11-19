@@ -105,7 +105,10 @@ def stated_limits(body: Any, *, dated: bool = False) -> list[str]:
         notes.extend(n for n in _node_limits(node, who, dated) if n not in notes)
         states = node.get("field_states")
         for field, state in states.items() if isinstance(states, dict) else ():
-            if (state["state"], state["reason"]) == ("unverified", "unconfirmed"):
+            if isinstance(state, dict) and (state.get("state"), state.get("reason")) == (
+                "unverified",
+                "unconfirmed",
+            ):
                 at = [p for p in path if p not in ("concepts", "values")]
                 when = f" ({node['period_end']})" if node.get("period_end") else ""
                 unconfirmed.setdefault(who, []).append(".".join((*at, field)) + when)
