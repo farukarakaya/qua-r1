@@ -9,7 +9,7 @@ Each command takes `--help`, which also lists the less common commands and optio
 | `trading-r1 [QUESTION]` | Open the terminal. `--profile NAME`, `--mode MODE` |
 | `trading-r1 serve` | Run the backend alone, in the foreground |
 | `trading-r1 export ID` | Write a report. `--format pdf\|md\|html`, `-o FILE`, `--send CHANNELS` |
-| `trading-r1 docs add PDF [PDF ...]` | Send new PDFs to the OCR model and save the transcripts locally |
+| `trading-r1 docs add PATH [PATH ...]` | Send new PDFs (or directories of PDFs) to the OCR model and save transcripts locally |
 | `trading-r1 sessions list`, `delete ID` | Your sessions; delete one here and its copy in your account |
 | `trading-r1 channels add KIND`, `list`, `test NAME`, `remove NAME` | Your channels |
 | `trading-r1 jobs add`, `list`, `run ID`, `runs ID`, `remove ID` | Your scheduled reports, and what each run did |
@@ -54,11 +54,14 @@ can share with the OCR endpoint. Each PDF must fit the 20 MiB file limit and the
 and output limits. The importer does not set an output-token cap. See [custom OCR endpoints](docs/custom-model-endpoints.md#pdf-ocr-uses-a-separate-endpoint)
 for API requirements.
 
-The command prints the path to `~/.trading-r1/docs/<sha256>.json` (under `TR1_HOME` if set). The JSON
-contains a whole-report summary and numbered Markdown pages, including tables where the model
-could read them. Both come from the same request. Re-adding identical bytes reuses the local copy,
-even if the file was renamed. Older transcripts remain readable without a summary. Failed or
-incomplete responses are not saved or retried automatically. The original PDF is unchanged.
+The command prints the path to `~/.trading-r1/docs/<sha256>.json` (under `TR1_HOME` if set). Pass
+files or directories to scan recursively, and use `--workers N` to control concurrency (default 4).
+The JSON contains a whole-report summary and numbered Markdown pages, including tables where the
+model could read them. Both come from the same request. Re-adding identical bytes reuses the local
+copy, even if the file was renamed. Older transcripts remain readable without a summary, and
+`--backfill-summaries` generates or refreshes summaries from saved page text without uploading the
+PDF again. Failed or incomplete responses are not saved or retried automatically. The original PDF
+is unchanged.
 
 ### Use imported reports in research
 

@@ -125,16 +125,13 @@ class OpenAIProvider(Provider):
     # a 400 with code `context_length_exceeded`
     overflow_signatures = ("exceeds the context window", "context_length_exceeded")
 
-    async def complete_pdf(
+    async def _complete_structured(
         self,
-        pdf: bytes,
+        content: list[dict[str, Any]],
         *,
         instructions: str,
-        prompt: str,
         response_schema: dict[str, Any],
     ) -> Completion:
-        """Send a whole PDF inline in one structured Responses call, without retries or tools."""
-        data = base64.b64encode(pdf).decode("ascii")
         client = (
             client_for(self.profile)
             if self.client is None
@@ -144,19 +141,7 @@ class OpenAIProvider(Provider):
             response = await cl.responses.create(
                 model=self.profile.model,
                 instructions=instructions,
-                input=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "input_file",
-                                "filename": "source.pdf",
-                                "file_data": f"data:application/pdf;base64,{data}",
-                            },
-                            {"type": "input_text", "text": prompt},
-                        ],
-                    }
-                ],
+                input=[{"role": "user", "content": content}],
                 store=False,
                 text={
                     "format": {
@@ -170,6 +155,43 @@ class OpenAIProvider(Provider):
         record_openai(self.profile.name, response)
         return Completion(
             response.output_text, "stop" if response.status == "completed" else "error"
+        )
+
+    async def complete_pdf(
+        self,
+        pdf: bytes,
+        *,
+        instructions: str,
+        prompt: str,
+        response_schema: dict[str, Any],
+    ) -> Completion:
+        """Send a whole PDF inline in one structured Responses call, without retries or tools."""
+        data = base64.b64encode(pdf).decode("ascii")
+        return await self._complete_structured(
+            [
+                {
+                    "type": "input_file",
+                    "filename": "source.pdf",
+                    "file_data": f"data:application/pdf;base64,{data}",
+                },
+                {"type": "input_text", "text": prompt},
+            ],
+            instructions=instructions,
+            response_schema=response_schema,
+        )
+
+    async def complete_json(
+        self,
+        prompt: str,
+        *,
+        instructions: str,
+        response_schema: dict[str, Any],
+    ) -> Completion:
+        """Send text in one structured Responses call, without retries or tools."""
+        return await self._complete_structured(
+            [{"type": "input_text", "text": prompt}],
+            instructions=instructions,
+            response_schema=response_schema,
         )
 
     async def generate(
