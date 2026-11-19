@@ -14,6 +14,9 @@ node_modules/
 .env
 .env.*
 
+# Local report downloads
+custom_report_feed/
+
 # Editors and OS
 .idea/
 .vscode/

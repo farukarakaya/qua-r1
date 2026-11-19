@@ -35,6 +35,31 @@ _PAGES = [{"page": 1, "markdown": "# FAVÖK\n\n| 2027T | 44,5 |"}, {"page": 2, "
 _SUMMARY = "This report includes a FAVÖK forecast on page 1."
 
 
+def _summary_response(summary: str = _SUMMARY, *, status: str = "completed") -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "id": "resp_summary_test",
+            "status": status,
+            "output": [
+                {
+                    "type": "message",
+                    "id": "msg_summary_test",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": json.dumps({"summary": summary}),
+                            "annotations": [],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+
 def _response(pages: list, *, status: str = "completed", summary: str = _SUMMARY) -> httpx.Response:
     return httpx.Response(
         200,
@@ -114,6 +139,7 @@ class TestDocuments(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(first.path.stat().st_mode), 0o600)
         saved = json.loads(first.path.read_text(encoding="utf-8"))
         self.assertEqual(saved["schema_version"], 2)
+        self.assertEqual(saved["summary_prompt_id"], documents.SUMMARY_PROMPT_ID)
         self.assertEqual(saved["summary"], _SUMMARY)
         self.assertEqual(saved["pages"], _PAGES)
         self.assertEqual(saved["source_name"], "report.pdf")
@@ -238,3 +264,67 @@ class TestDocuments(unittest.TestCase):
         self.assertIn("not a PDF", err.getvalue())
         self.assertIn("saved OCR", stdout.getvalue())
         self.assertEqual(len(self.requests), 1)
+
+    def test_backfill_summaries_upgrades_v1_and_stale_v2_without_reuploading_pdf(self):
+        self._mock_openai(lambda: _response(_PAGES))
+        imported = documents.add_pdf(self.pdf)
+        record = json.loads(imported.path.read_text(encoding="utf-8"))
+
+        # Downgrade to schema_version 1 without summary and backfill.
+        v1 = {k: v for k, v in record.items() if k not in ("summary", "summary_prompt_id")}
+        v1["schema_version"] = 1
+        imported.path.write_text(json.dumps(v1), encoding="utf-8")
+
+        self.requests.clear()
+        self._mock_openai(lambda: _summary_response("Backfilled v1 summary."))
+        upgraded = documents.add_pdf(self.pdf, backfill=True)
+        self.assertTrue(upgraded.reused)
+        self.assertTrue(upgraded.backfilled)
+        self.assertEqual(len(self.requests), 1)
+        payload = json.loads(self.requests[0].content)
+        self.assertEqual(payload["input"][0]["content"][0]["type"], "input_text")
+        saved = json.loads(imported.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["schema_version"], 2)
+        self.assertEqual(saved["summary"], "Backfilled v1 summary.")
+        self.assertEqual(saved["summary_prompt_id"], documents.SUMMARY_PROMPT_ID)
+
+        # Already up-to-date v2 transcript does not trigger another request.
+        again = documents.add_pdf(self.pdf, backfill=True)
+        self.assertTrue(again.reused)
+        self.assertFalse(again.backfilled)
+        self.assertEqual(len(self.requests), 1)
+
+        # Stale summary_prompt_id triggers a summary refresh.
+        saved["summary_prompt_id"] = "stale-prompt-id"
+        imported.path.write_text(json.dumps(saved), encoding="utf-8")
+        self._mock_openai(lambda: _summary_response("Refreshed v2 summary."))
+        with redirect_stdout(io.StringIO()) as stdout:
+            code = cli.main(["add", "--backfill-summaries", str(self.pdf)])
+        self.assertEqual(code, 0)
+        self.assertIn("added summary", stdout.getvalue())
+        refreshed = json.loads(imported.path.read_text(encoding="utf-8"))
+        self.assertEqual(refreshed["summary"], "Refreshed v2 summary.")
+        self.assertEqual(refreshed["summary_prompt_id"], documents.SUMMARY_PROMPT_ID)
+
+    def test_cli_scans_directories_skips_symlinks_and_validates_workers(self):
+        self._mock_openai(lambda: _response(_PAGES))
+        folder = self.home / "reports"
+        nested = folder / "nested"
+        nested.mkdir(parents=True)
+        real_pdf = nested / "a.pdf"
+        real_pdf.write_bytes(self.pdf.read_bytes())
+        (folder / "notes.txt").write_text("ignored", encoding="utf-8")
+        (folder / "link.pdf").symlink_to(real_pdf)
+        empty = self.home / "empty"
+        empty.mkdir()
+
+        with redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()) as stdout:
+            code = cli.main(["add", "--workers", "2", str(folder), str(empty)])
+        self.assertEqual(code, 1)
+        self.assertIn("no PDFs found", err.getvalue())
+        self.assertIn("saved OCR", stdout.getvalue())
+        self.assertEqual(len(self.requests), 1)
+
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            cli.main(["add", "--workers", "0", str(self.pdf)])
+        self.assertEqual(cm.exception.code, 2)
