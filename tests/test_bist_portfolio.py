@@ -46,7 +46,11 @@ class BistPortfolioTests(unittest.IsolatedAsyncioTestCase):
     def test_calc_series_require_equal_lengths_nonzero_fx_and_positive_prices(self):
         for expression, message in (
             ("[2, 3] / [1]", "equal-length"),
+            ("[2, 3] + [1]", "equal-length"),
             ("[2, 3] / [0, 1]", "division by zero"),
+            ("[2, 3] / 0", "division by zero"),
+            ("[] * 2", "nonempty"),
+            ("[2, 3] ** 2", r"\+ - \* /"),
             ("returns([2, 0])", "positive prices"),
         ):
             with self.subTest(expression=expression), self.assertRaisesRegex(ToolError, message):
@@ -54,6 +58,22 @@ class BistPortfolioTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             safe_eval("{'test': [6/3, 10+2], 'scalar': 2**3}"), {"test": [2, 12], "scalar": 8}
         )
+
+    def test_calc_linear_series_arithmetic_and_buyhold_wealth_path(self):
+        values = {
+            "a": [10.0, 12.0, 9.0],
+            "b": [20.0, 20.0, 25.0],
+            "wealth": "100 * (0.6 * a / a[0] + 0.4 * b / b[0])",
+        }
+        result = safe_eval(
+            "{'wealth': wealth, 'shifted': wealth - 100, 'neg': -a, 'inv': 100 / a}", values
+        )
+        for actual, expected in zip(result["wealth"], [100.0, 112.0, 104.0], strict=True):
+            self.assertAlmostEqual(actual, expected)
+        for actual, expected in zip(result["shifted"], [0.0, 12.0, 4.0], strict=True):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(result["neg"], [-10.0, -12.0, -9.0])
+        self.assertAlmostEqual(result["inv"][0], 10.0)
 
     def test_calc_intermediate_series_are_validated_and_can_feed_each_other(self):
         values = {
@@ -159,6 +179,8 @@ class BistPortfolioTests(unittest.IsolatedAsyncioTestCase):
             "compute_risk_drawdown", {"closes": prices["XIST:LOGO"], "dates": f"{aligned}.dates"}
         )
         self.assertAlmostEqual(drawdown["max_drawdown"], 10 / 13 - 1)
+        self.assertEqual(drawdown["worst_episodes"][0]["peak_date"], "2025-01-08")
+        self.assertEqual(drawdown["worst_episodes"][0]["trough_date"], "2025-01-09")
         optimized, _ = await call(
             "compute_portfolio_optimization",
             {"prices": prices, "periods_per_year": periods, "method": "risk_parity"},
@@ -169,6 +191,21 @@ class BistPortfolioTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertAlmostEqual(risk["holdings"][0]["risk_contribution"], 0.5, places=4)
         self.assertAlmostEqual(sum(h["risk_contribution"] for h in risk["holdings"]), 1)
+        _, port_dd = await call(
+            "compute_risk_drawdown",
+            {"returns": f"{decomposed}.returns", "dates": f"{aligned}.dates"},
+        )
+        self.assertTrue(port_dd["worst_episodes"])
+        self.assertIn(port_dd["worst_episodes"][0]["peak_date"], dates)
+        self.assertIn(port_dd["worst_episodes"][0]["trough_date"], dates)
+        bad_dd = await dispatch(
+            "compute_risk_drawdown",
+            {"returns": [0.1, -0.2], "dates": ["2025-01-02", "2025-01-03"]},
+            registry=registry,
+            session_state=session,
+        )
+        self.assertFalse(bad_dd.ok)
+        self.assertIn("len(returns) + 1", bad_dd.text)
         _, performance = await call(
             "compute_portfolio_performance",
             {
