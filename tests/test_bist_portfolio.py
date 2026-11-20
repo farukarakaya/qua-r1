@@ -23,6 +23,10 @@ class BistPortfolioTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(skill)
         self.assertEqual(classify_skill(skill), ("workflow", "portfolio"))
         required = {
+            "data_macro_turkey",
+            "data_market_bist_sectors",
+            "data_market_rates",
+            "data_market_sectors",
             "data_market_bist_screen",
             "data_market_bist",
             "data_market_aligned_prices",

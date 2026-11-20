@@ -206,7 +206,7 @@ def _fetch(bp: Any, req: BistDataRequest, ticker: str | None) -> tuple[list[dict
     if dataset == "index_components":
         return _rows(bp.Index(ticker).components, req.limit), "borsapy BIST index components"
     if dataset == "profile":
-        if ticker in bp.indices():
+        if ticker in bist.index_symbols(bp):
             return _rows(bp.Index(ticker).info), bist.SOURCE
         return _rows(bp.Ticker(ticker).info.todict()), "borsapy BIST profile"
 

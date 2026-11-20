@@ -38,6 +38,7 @@ LOG_FILE = "daemon.log"
 # point at servers, models and state. Never the per-process token or the auth switch.
 _COPIED = re.compile(r"^TR1_(?!API_TOKEN$|API_AUTH$|API_URL$|SERVICE$)\w+$")
 _SECRET = re.compile(r"(TOKEN|PASSWORD|SECRET|KEY)$")
+_DATA_KEYS = {"EVDS_API_KEY"}  # CBRT EVDS; copied into credentials.json, not daemon.env
 
 Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
@@ -48,7 +49,7 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 
 def copied_environment(env: Mapping[str, str]) -> dict[str, str]:
     """The variables of ``env`` the daemon is given, in name order."""
-    keys = model_key_names()
+    keys = model_key_names() | _DATA_KEYS
     return {k: env[k] for k in sorted(env) if (k in keys or _COPIED.match(k)) and env[k]}
 
 
