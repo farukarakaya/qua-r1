@@ -9,6 +9,7 @@
  * given it routes there instead (e.g. a model that needs an API key shows guidance).
  */
 import { useKeyboard } from "@opentui/solid"
+import { Show } from "solid-js"
 
 import { type EscapeMeans, keyHint } from "../lib/hints"
 import { layout, selectColors, theme } from "../theme"
@@ -23,6 +24,7 @@ export interface ListOption {
 
 export function ListDialog(props: {
   title: string
+  note?: string
   options: ListOption[]
   onSelect: (value: string) => void
   onCancel: () => void
@@ -40,6 +42,12 @@ export function ListDialog(props: {
   const height = () => Math.min(Math.max(props.options.length * 2, 2), 14)
   return (
     <Modal width={props.width ?? layout.width.md} title={props.title}>
+      <Show when={props.note}>
+        <text fg={theme.text} wrapMode="word">
+          {props.note}
+        </text>
+        <box height={1} />
+      </Show>
       <select
         focused
         options={props.options}

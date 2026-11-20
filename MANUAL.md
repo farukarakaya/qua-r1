@@ -78,10 +78,14 @@ and summaries across the local library, then uses `read_doc` to read and cite se
 Check material figures against the original PDF; OCR can misread tables and numbers.
 
 The selected model receives the preview and any summaries or page text returned by those tools.
-Document sessions are not enrolled in session sync; model requests and results are still logged
-locally. Use a regular new session to ask without the library. For the authenticated `/research`
-API, use a new `session_id` prefixed with `docs-` and reuse it for follow-ups. Other session IDs
-do not load PDFs.
+To change PDF access without leaving the session, open the `/` palette and select **PDF access…**
+between turns. Enabling PDFs permanently stops uploads for that session. Any turns already
+synced remain in your account. Disabling PDFs stops new report searches and reads, but does not
+remove earlier excerpts or citations from the transcript. The setting is saved for when you resume.
+
+API clients can read the setting with `GET /sessions/{id}/pdfs` and change it with `PUT` at the
+same path using `{"enabled": true}` or `{"enabled": false}`. New `docs-` IDs default to PDFs on;
+all others default to off. Reusing a deleted PDF session ID starts with PDFs off and uploads still blocked.
 
 ## Reports, channels and jobs
 

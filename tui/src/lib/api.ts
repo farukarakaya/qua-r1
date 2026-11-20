@@ -41,7 +41,12 @@ export interface Health {
   reader: { profile: string | null; model: string | null; ready: boolean }
 }
 
-interface SessionSummary {
+export interface SessionPdfs {
+  pdfs_enabled: boolean
+  pdfs_private: boolean // permanent sync exclusion, even when PDFs are off
+}
+
+interface SessionSummary extends SessionPdfs {
   id: string
   title: string
   created_at: string
@@ -267,7 +272,7 @@ export async function health(profile?: string, opts: ReqOpts = {}): Promise<Heal
   return getJson<Health>(`/health${q}`, opts)
 }
 
-export async function newSessionId(signal: AbortSignal): Promise<string> {
+export async function newSessionId(signal?: AbortSignal): Promise<string> {
   return (await postJson<{ id: string }>("/sessions", undefined, { signal })).id
 }
 
@@ -292,9 +297,16 @@ export type SessionEntry =
   | { type: "compact"; at: string; stats?: Record<string, unknown> }
 
 /** A session's turns, to replay the transcript when resuming or switching to it. */
-export async function getSession(sessionId: string, opts: ReqOpts = {}): Promise<SessionEntry[]> {
-  const r = await getJson<{ turns: SessionEntry[] }>(`/sessions/${encodeURIComponent(sessionId)}`, opts)
-  return r.turns
+export async function getSession(sessionId: string, opts: ReqOpts = {}) {
+  return getJson<SessionPdfs & { turns: SessionEntry[] }>(`/sessions/${encodeURIComponent(sessionId)}`, opts)
+}
+
+export async function getSessionPdfs(sessionId: string, opts: ReqOpts = {}) {
+  return getJson<SessionPdfs>(`/sessions/${encodeURIComponent(sessionId)}/pdfs`, opts)
+}
+
+export async function setSessionPdfs(sessionId: string, enabled: boolean, opts: ReqOpts = {}) {
+  return putJson<SessionPdfs>(`/sessions/${encodeURIComponent(sessionId)}/pdfs`, { enabled }, opts)
 }
 
 /** Persisted user settings: the sticky backbone (`null` until the user chose one, when the
@@ -344,12 +356,12 @@ export async function getStatus(
   sessionId?: string,
   profile?: string,
   opts: ReqOpts = {},
-): Promise<StatusInfo> {
+): Promise<StatusInfo & SessionPdfs> {
   const q = new URLSearchParams()
   if (sessionId) q.set("session_id", sessionId)
   if (profile) q.set("profile", profile)
   const qs = q.toString()
-  return getJson<StatusInfo>(`/status${qs ? `?${qs}` : ""}`, opts)
+  return getJson<StatusInfo & SessionPdfs>(`/status${qs ? `?${qs}` : ""}`, opts)
 }
 
 /** Switchable backbone profiles + credential availability, for /model. */

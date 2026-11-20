@@ -27,7 +27,7 @@ from typing import Any
 import httpx
 
 from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX
-from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX
+from trading_r1.state.session_documents import pdf_sync_excluded
 from trading_r1.sync.client import (
     APPLICATION,
     DEFAULT_BASE_URL,
@@ -117,10 +117,22 @@ class SyncEngine:
         if gen != self._gen or not self._enabled:
             raise _Fenced
 
+    def _excluded(self, session_id: str) -> bool:
+        return session_id.startswith(ISTFIN_SESSION_PREFIX) or pdf_sync_excluded(
+            self.dir, session_id
+        )
+
+    def _fence_upload(self, session_id: str, gen: int) -> None:
+        self._fence(gen)
+        # Check after gathering metadata or reading a batch, just before sending it. A request
+        # already in flight can only contain bytes collected before the PDF switch took effect.
+        if self._excluded(session_id):
+            raise _Fenced
+
     # -- enrolment and state --------------------------------------------------------------
     def enrol(self, session_id: str) -> bool:
         """Start syncing a session (its whole log, from the first byte)."""
-        if not _SESSION_ID.fullmatch(session_id):
+        if not _SESSION_ID.fullmatch(session_id) or self._excluded(session_id):
             return False
         return self.store.enrol(session_id, self._clock())
 
@@ -138,7 +150,9 @@ class SyncEngine:
     def state_of(self, session_id: str) -> str:
         """``synced``, ``pending``, ``full``, ``error`` or ``off``."""
         return shown_state(
-            self.store.get(session_id), self._size(session_id), enabled=self._enabled
+            self.store.get(session_id),
+            self._size(session_id),
+            enabled=self._enabled and not self._excluded(session_id),
         )
 
     def status(self) -> dict[str, Any]:
@@ -146,7 +160,9 @@ class SyncEngine:
         sizes = {e.session_id: self._size(e.session_id) for e in entries}
         return {
             "enabled": self._enabled,
-            "counts": self.store.summary(sizes, enabled=self._enabled),
+            "counts": self.store.summary(
+                sizes, enabled=self._enabled, excluded={sid for sid in sizes if self._excluded(sid)}
+            ),
             "deleting": sum(1 for e in entries if e.tombstone == PENDING_DELETE),
         }
 
@@ -161,17 +177,13 @@ class SyncEngine:
     async def push(self, session_id: str, *, force: bool = False) -> str:
         """Send what the archive lacks of one enrolled session; returns its state. A session
         waiting out a backoff is left alone unless ``force`` is set."""
-        entry = self.store.get(session_id)
-        if (
-            entry is None
-            or not self._enabled
-            or session_id.startswith((DOCUMENT_SESSION_PREFIX, ISTFIN_SESSION_PREFIX))
-        ):
+        if not self._enabled:
             return "off"
         async with self._lock(session_id):
             gen = self._gen
             entry = self.store.get(session_id)
-            if entry is None:
+            # A private session's earlier archive copy can still be deleted explicitly.
+            if entry is None or (not entry.tombstone and self._excluded(session_id)):
                 return "off"
             if not force and entry.retry_at > self._clock():
                 return self.state_of(session_id)
@@ -195,7 +207,7 @@ class SyncEngine:
         sent = _sent_mark(label, details)
         entry = self._entry(session_id)
         if entry.remote_size is None or (sent and sent != entry.label_sent):
-            self._fence(gen)
+            self._fence_upload(session_id, gen)
             view = await self.client.put_session(session_id, label, details=details)
             fields: dict[str, Any] = {"remote_size": view["size"], "label_sent": sent}
             if view["size"] < entry.cursor:  # the archive was restored to an earlier state
@@ -214,7 +226,7 @@ class SyncEngine:
                 raise RejectedError("a log line is too large for your account")
             if not batch:
                 break
-            self._fence(gen)
+            self._fence_upload(session_id, gen)
             try:
                 size, verified = await self.client.append(session_id, cursor, batch)
             except DivergedError:
@@ -386,7 +398,12 @@ class SyncEngine:
         return self.status()
 
     def _due(self, entry: Entry) -> bool:
-        if entry.tombstone or entry.state == "error" or entry.retry_at > self._clock():
+        if (
+            entry.tombstone
+            or entry.state == "error"
+            or entry.retry_at > self._clock()
+            or self._excluded(entry.session_id)
+        ):
             return False
         size = self._size(entry.session_id)
         if entry.cursor != size or (
@@ -472,7 +489,7 @@ class SyncEngine:
                 with contextlib.suppress(OSError):
                     os.unlink(tmp)
                 raise
-        if as_id:
+        if as_id or self._excluded(session_id):
             return path
         self.store.enrol(session_id, self._clock())
         label = meta["metadata"].get("label")

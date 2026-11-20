@@ -160,9 +160,9 @@ class ResearchRequest(BaseModel):
     session_id: str | None = Field(
         None,
         pattern=f"^{SESSION_ID_PATTERN}$",
-        description="Thread this turn into a session. Use a new ID starting with docs- to include "
-        "imported reports (and IstFin if configured), or istfin- for IstFin without PDFs. "
-        "Neither kind is synced. "
+        description="Thread this turn into a session. Enable imported reports with "
+        "PUT /sessions/{id}/pdfs or a new docs- ID. Use istfin- for IstFin without PDFs. "
+        "Sessions with PDF access or IstFin are excluded from sync. "
         "Omit for a sessionless run.",
     )
 

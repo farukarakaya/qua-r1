@@ -14,7 +14,7 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,7 @@ from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX, recorder
 from trading_r1.runtime.session.store import SESSION_ID_PATTERN
 from trading_r1.runtime.summarize import summarize_history
 from trading_r1.service import preferences, state
+from trading_r1.state.session_documents import pdf_sync_excluded, set_pdfs_enabled
 
 _LOG = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,6 +73,44 @@ def new_session() -> dict[str, str]:
     return {"id": f"{prefix}{uuid.uuid4()}"}
 
 
+def _pdf_state(session_id: str | None) -> dict[str, bool]:
+    enabled = state.session_uses_documents(session_id)
+    return {
+        "pdfs_enabled": enabled,
+        "pdfs_private": enabled
+        or bool(session_id and pdf_sync_excluded(state.SESSIONS.directory, session_id)),
+    }
+
+
+@router.get("/sessions/{session_id}/pdfs")
+def session_pdfs(session_id: str = Path(pattern=f"^{SESSION_ID_PATTERN}$")) -> dict[str, bool]:
+    """Read the current PDF setting without replaying the transcript or loading a model."""
+    return _pdf_state(session_id)
+
+
+class SessionPdfsRequest(BaseModel):
+    enabled: bool
+
+
+@router.put("/sessions/{session_id}/pdfs")
+async def set_session_pdfs(
+    req: SessionPdfsRequest, session_id: str = Path(pattern=f"^{SESSION_ID_PATTERN}$")
+) -> dict[str, bool]:
+    """Change PDF access for future turns. The first enable also excludes archive uploads."""
+    if session_id.startswith(("job-", "telegram-")):
+        raise HTTPException(status_code=409, detail="PDF access is for interactive sessions only")
+    lock = state.session_lock(session_id)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="Wait for the current turn or compaction")
+    async with lock:
+        return await asyncio.to_thread(_save_pdf_state, session_id, req.enabled)
+
+
+def _save_pdf_state(session_id: str, enabled: bool) -> dict[str, bool]:
+    set_pdfs_enabled(state.SESSIONS.directory, session_id, enabled)
+    return _pdf_state(session_id)
+
+
 @router.get("/sessions")
 async def sessions(
     limit: int = Query(50, ge=1, le=200), include_jobs: bool = False
@@ -86,7 +125,12 @@ async def sessions(
     except Exception:  # noqa: BLE001 (sync trouble never hides the sessions)
         _LOG.exception("the sync state of the sessions could not be read")
         marks = {s["id"]: "error" for s in found}
-    return {"sessions": [{**s, "sync": marks[s["id"]]} for s in found]}
+    return {
+        "sessions": [
+            {**s, "sync": marks[s["id"]], **await asyncio.to_thread(_pdf_state, s["id"])}
+            for s in found
+        ]
+    }
 
 
 @router.delete("/sessions/{session_id}")
@@ -112,7 +156,8 @@ async def session_detail(session_id: str) -> dict[str, Any]:
     """A session as the user saw it, for resuming or switching to it: each turn's question,
     config, the events to replay and how it ended, with compactions in place. Empty for an
     unknown session."""
-    return {"id": session_id, "turns": await asyncio.to_thread(state.SESSIONS.turns, session_id)}
+    entries = await asyncio.to_thread(state.SESSIONS.turns, session_id)
+    return {"id": session_id, "turns": entries, **await asyncio.to_thread(_pdf_state, session_id)}
 
 
 @router.get("/sessions/{session_id}/report")
@@ -141,6 +186,7 @@ async def status(session_id: str | None = None, profile: str | None = None) -> d
     return {
         "model": backbone.model,
         "istfin": use_istfin,
+        **await asyncio.to_thread(_pdf_state, session_id),
         "context_window": window,
         "compact_at": compact_at(backbone, cfg.recovery),
         "tokens_used": used,
