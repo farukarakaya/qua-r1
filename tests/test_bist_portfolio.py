@@ -36,6 +36,7 @@ class BistPortfolioTests(unittest.IsolatedAsyncioTestCase):
             "compute_portfolio_decomposition",
             "compute_portfolio_performance",
             "compute_portfolio_optimization",
+            "compute_portfolio_review",
         }
         self.assertEqual(set(skill.requires_tools), required)
         tool_state = ToolSessionState()
