@@ -160,10 +160,12 @@ SPEC = ToolSpec(
     tier="deferred",
     result_kind="data",
     description=(
-        "Screen the full BIST stock universe, including mid-caps, by USD market cap and liquidity, "
-        "valuation, profitability, dividends and analyst upside. Omit index to screen all stocks. "
-        "Filters exclude missing measurements; sort then limit the results. "
-        "Verify leads with company filings and corporate actions before investing."
+        "Screen the full BIST stock universe, including small- and mid-caps, by USD market cap "
+        "and liquidity, valuation, profitability, dividends and analyst upside. Omit index to "
+        "screen all stocks. Filters exclude missing measurements; omit forecast-only fields "
+        "(net_margin, net_income_growth, upside_potential) when screening uncovered small-caps. "
+        "Sort then limit the results. Verify leads with company filings and corporate actions "
+        "before investing."
     ),
     request_schema=BistScreenRequest,
     handler=_screen,
