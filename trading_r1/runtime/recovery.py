@@ -71,7 +71,16 @@ def classify_model_error(err: BaseException, provider: Provider) -> str:
         return COMPACT
     if status_of(err) == 400:
         return REGENERATE
-    if is_default_retryable(err) or _is_transient_by_name(err):
+    # The Responses SDK may report a dropped stream as a bare, status-less APIError.
+    incomplete_stream = (
+        type(err).__name__ == "APIError"
+        and status_of(err) is None
+        and _message_of(err).startswith(
+            "stream error: stream disconnected before completion: "
+            "stream closed before response.completed"
+        )
+    )
+    if incomplete_stream or is_default_retryable(err) or _is_transient_by_name(err):
         return BACKOFF
     return FATAL
 

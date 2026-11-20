@@ -218,12 +218,16 @@ class OpenAIProvider(Provider):
         if on_delta is None:
             resp = await cl.responses.create(**kwargs)
         else:
+            # A retry can replace the whole attempt. Do not publish unfinished answer text.
+            content: list[str] = []
             async with cl.responses.stream(**kwargs) as stream:
                 async for ev in stream:
                     if ev.type == "response.reasoning_summary_text.delta":
                         on_delta("reasoning", ev.delta)
                     elif ev.type == "response.output_text.delta":
-                        on_delta("content", ev.delta)
+                        content.append(ev.delta)
                 resp = await stream.get_final_response()
+            if content:
+                on_delta("content", "".join(content))
         record_openai(self.profile.name, resp)
         return _turn_from_response(self.profile, resp)
