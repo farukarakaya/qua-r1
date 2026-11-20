@@ -59,9 +59,12 @@ def compare_review(req: ReviewRequest) -> ReviewOutput:
 
     def allowed(name: str) -> bool:
         basis = req.sale_basis.get(name)
-        return req.mandate_sales_authorized or bool(
-            basis
-            and basis.reason == "thesis_break"
+        if basis is None:
+            return False
+        if basis.reason == "mandate_change":
+            return req.mandate_sales_authorized
+        return bool(
+            basis.reason == "thesis_break"
             and basis.original_thesis.strip()
             and basis.contrary_filing.strip()
         )
@@ -105,8 +108,8 @@ SPEC = ToolSpec(
     tier="deferred",
     description=(
         "Compare hold, first stage and full target using explicitly funded trades at the same "
-        "marks. Draft trades only. Sells without mandate authorization or a documented thesis "
-        "break remain conditional. Negative closing cash means unfunded. One-way turnover is "
+        "marks. Draft trades only. Sells require an authorized mandate change or a documented "
+        "thesis break. Other sales are conditional. Negative cash is unfunded. Turnover is "
         "half gross trade value divided by opening holdings plus opening cash."
     ),
     request_schema=ReviewRequest,

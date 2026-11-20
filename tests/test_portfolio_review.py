@@ -42,6 +42,34 @@ class PortfolioReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(target["blocked_sales"], ["HOLDCO", "OPERATING"])
         self.assertAlmostEqual(target["closing_cash"], 25)  # 100 + 600 - 650 - 12.5 - 12.5
 
+    async def test_mandate_permission_only_unlocks_explicit_mandate_changes(self):
+        bases = {
+            "review": {"reason": "review_only"},
+            "cut": {"reason": "payout_cut_only"},
+            "unsupported": {"reason": "thesis_break", "original_thesis": "Licensed plant"},
+            "change": {"reason": "mandate_change"},
+        }
+        holdings = dict.fromkeys([*bases, "missing"], 100)
+        for permission in (True, False):
+            with self.subTest(permission=permission):
+                result = await dispatch(
+                    "compute_portfolio_review",
+                    dict(
+                        holdings=holdings,
+                        opening_cash=0,
+                        commission_rate=0,
+                        spread_rate=0,
+                        stage_trades={},
+                        full_trades=dict.fromkeys(holdings, -100),
+                        mandate_sales_authorized=permission,
+                        sale_basis=bases,
+                    ),
+                    registry=catalog_tool_registry(),
+                )
+                self.assertTrue(result.ok, result.text)
+                blocked = set(result.payload["full_target"]["blocked_sales"])
+                self.assertEqual(blocked, set(holdings) - ({"change"} if permission else set()))
+
     async def test_confirmed_cash_and_cited_thesis_break_are_distinct_from_income(self):
         outcome = await dispatch(
             "compute_portfolio_review",
