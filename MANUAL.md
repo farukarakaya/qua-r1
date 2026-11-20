@@ -71,17 +71,18 @@ is unchanged.
 
 ### Use imported reports in research
 
-Open the `/` palette and select **New session with PDFs…**. Then ask a normal research question,
-such as “Which Turkish stocks have the strongest analyst recommendations?” You do not need to name
-a PDF. The agent receives a short filename preview, uses `search_docs` to find relevant reports
-and summaries across the local library, then uses `read_doc` to read and cite selected pages.
-Check material figures against the original PDF; OCR can misread tables and numbers.
+Open the `/` palette, select **PDF access…**, then choose **Enable PDFs**. You can do this before
+the first question in a new session or between turns in an existing one. Ask a research question
+such as “Which Turkish stocks have the strongest analyst recommendations?” The agent receives a
+short filename preview, uses `search_docs` to find relevant reports and summaries across the
+local library, then uses `read_doc` to read and cite selected pages. Check material figures
+against the original PDF because OCR can misread tables and numbers.
 
 The selected model receives the preview and any summaries or page text returned by those tools.
-To change PDF access without leaving the session, open the `/` palette and select **PDF access…**
-between turns. Enabling PDFs permanently stops uploads for that session. Any turns already
-synced remain in your account. Disabling PDFs stops new report searches and reads, but does not
-remove earlier excerpts or citations from the transcript. The setting is saved for when you resume.
+Enabling PDFs permanently stops uploads for that session. Any turns already synced remain in
+your account. Choose **Disable PDFs** under **PDF access…** between turns to stop new searches
+and reads. Earlier excerpts and citations stay in the transcript. The setting is saved for when
+you resume.
 
 API clients can read the setting with `GET /sessions/{id}/pdfs` and change it with `PUT` at the
 same path using `{"enabled": true}` or `{"enabled": false}`. New `docs-` IDs default to PDFs on;

@@ -29,7 +29,6 @@ export interface CommandGroup {
 
 export interface CommandActions {
   newSession: () => void
-  newDocumentSession: () => void
   choosePdfAccess: () => void
   resumeSession: () => void
   compactContext: () => void
@@ -67,12 +66,6 @@ export function buildCommandGroups(actions: CommandActions, ctx: CommandContext)
       label: "Session",
       commands: [
         { id: "new", title: "New session", run: actions.newSession, shortcut: "^N", unavailable: busy },
-        {
-          id: "new-documents",
-          title: "New session with PDFs…",
-          run: actions.newDocumentSession,
-          unavailable: busy,
-        },
         {
           id: "pdf",
           title: "PDF access…",
