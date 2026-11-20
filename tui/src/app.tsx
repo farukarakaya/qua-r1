@@ -86,6 +86,10 @@ function AppInner() {
   const [running, setRunning] = createSignal(false)
   const [sessionId, setSessionId] = createSignal<string>()
   const documentSession = () => sessionId()?.startsWith(DOCUMENT_SESSION_PREFIX) ?? false
+  const [pdfSessionWithIstfin, setPdfSessionWithIstfin] = createSignal<string>()
+  const istfinSession = () =>
+    sessionId()?.startsWith(ISTFIN_SESSION_PREFIX) ||
+    (documentSession() && sessionId() === pdfSessionWithIstfin())
   const [syncStatus, setSyncStatus] = createSignal<SyncStatus | null>(null)
   // Launch overrides the CLI passes via env for `trading-r1 --profile/--mode`.
   const launchEnv = typeof process !== "undefined" ? process.env : ({} as Record<string, string | undefined>)
@@ -116,11 +120,16 @@ function AppInner() {
 
   async function refreshUsage() {
     // Needs a selected backbone (the status endpoint requires one); skip until then.
-    if (!activeProfile()) return
+    const profile = activeProfile()
+    if (!profile) return
+    const id = sessionId()
     // No session yet: the server returns what the first request will carry, and the real window,
     // so the rail meter shows from the start.
     try {
-      setUsage(await getStatus(sessionId(), activeProfile()))
+      const status = await getStatus(id, profile)
+      if (id !== sessionId() || profile !== activeProfile()) return
+      setUsage(status)
+      setPdfSessionWithIstfin(status.istfin && documentSession() ? id : undefined)
     } catch {
       /* meter is best-effort */
     }
@@ -236,7 +245,7 @@ function AppInner() {
           { name: "Cancel", description: "Keep the current session", value: "cancel" },
           {
             name: "Use imported reports",
-            description: "Share summaries and read pages with the selected model. No session sync.",
+            description: "Search reports and share selected results with the model. No session sync.",
             value: "enable",
           },
         ]}
@@ -761,7 +770,7 @@ function AppInner() {
         version={version()}
         notice={notice()}
         documents={documentSession()}
-        istfin={sessionId()?.startsWith(ISTFIN_SESSION_PREFIX)}
+        istfin={istfinSession()}
         context={prefs().side_panel ? undefined : contextMeter(usage())}
       />
       <box height={1} flexShrink={0} />

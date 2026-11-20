@@ -25,7 +25,6 @@ from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX, recorder
 from trading_r1.runtime.session.store import SESSION_ID_PATTERN
 from trading_r1.runtime.summarize import summarize_history
 from trading_r1.service import preferences, state
-from trading_r1.state.credentials import overlay
 
 _LOG = logging.getLogger(__name__)
 router = APIRouter()
@@ -69,7 +68,7 @@ async def compact(req: CompactRequest) -> Any:
 @router.post("/sessions")
 def new_session() -> dict[str, str]:
     """Choose the chat's privacy policy before its first turn can be enrolled for sync."""
-    prefix = ISTFIN_SESSION_PREFIX if overlay().get("ISTFIN_API_KEY", "").strip() else ""
+    prefix = ISTFIN_SESSION_PREFIX if state.istfin_configured() else ""
     return {"id": f"{prefix}{uuid.uuid4()}"}
 
 
@@ -136,9 +135,12 @@ async def status(session_id: str | None = None, profile: str | None = None) -> d
     backbone = await with_context_window(state.resolve_profile(profile))
     window = window_of(backbone, cfg.recovery)
     history = await asyncio.to_thread(state.SESSIONS.history, session_id)
-    used = estimate_tokens(history) + await asyncio.to_thread(state.prompt_overhead_of, session_id)
+    use_istfin = await asyncio.to_thread(state.session_uses_istfin, session_id)
+    overhead = await asyncio.to_thread(state.prompt_overhead_of, session_id, use_istfin=use_istfin)
+    used = estimate_tokens(history) + overhead
     return {
         "model": backbone.model,
+        "istfin": use_istfin,
         "context_window": window,
         "compact_at": compact_at(backbone, cfg.recovery),
         "tokens_used": used,

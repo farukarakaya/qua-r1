@@ -30,6 +30,7 @@ export function Footer(props: {
   documents?: boolean
   istfin?: boolean
 }) {
+  const capabilities = () => [props.documents && "PDFs", props.istfin && "IstFin"].filter(Boolean)
   return (
     <box height={1} flexDirection="row" paddingLeft={2} paddingRight={2} gap={2} flexShrink={0}>
       <Show
@@ -45,11 +46,8 @@ export function Footer(props: {
         <text fg={theme.accent}>{props.notice}</text>
       </Show>
       <box flexGrow={1} />
-      <Show when={props.documents}>
-        <text fg={theme.accent}>PDFs on</text>
-      </Show>
-      <Show when={props.istfin}>
-        <text fg={theme.accent}>IstFin on, sync off</text>
+      <Show when={capabilities().length}>
+        <text fg={theme.accent}>{capabilities().join(" + ")} on, sync off</text>
       </Show>
       <Show when={props.context}>
         <text fg={props.context!.warn ? theme.warning : theme.textMuted}>

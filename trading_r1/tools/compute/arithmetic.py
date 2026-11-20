@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, field_validator
 from trading_r1.contract.spec import Output, Result, ToolError, ToolSpec, hint
 from trading_r1.contract.units import Code, Count, Exact
 from trading_r1.tools.compute.cashflows import irr, npv
-from trading_r1.tools.compute.series import MAX_SERIES_LEN
+from trading_r1.tools.compute.series import MAX_SERIES_LEN, pct_returns
 
 _DESCRIPTION = (
     "Evaluate arithmetic exactly (growth rates, ratios, percentages, sums), e.g. "
@@ -41,9 +41,11 @@ _DESCRIPTION = (
     "'[5.64/4.37, 28.09/29.76]', or a dict to label them '{\"OCF/NI FY26\": ocf/ni}'; a list of "
     "lists for a grid (no comprehensions). `values` names inputs: numbers, series "
     "(values={'rev': 'prev:<id>.lines.revenue'}, expression 'rev[-1]/rev[0] - 1') or "
-    "expressions over earlier values; names must be identifiers (ocf_fy26, not 'OCF FY26'). "
-    "Index a series with [i] (negative from the end), or pass it to sum/mean/median/stdev/var/"
-    "min/max/len/npv/irr."
+    "scalar or series expressions over earlier values; names must be identifiers (e.g. ocf_fy26). "
+    "Index a series with [i], or pass it to sum/mean/median/stdev/var/min/max/len/npv/irr. "
+    "Divide two equal-length series pointwise with `a / b`, e.g. to convert aligned prices "
+    "using FX. `returns(prices)` computes adjacent simple returns of positive prices. "
+    'Both support named result series: \'{"stock": stock / fx, "benchmark": returns(index / fx)}\'.'
 )
 
 _BIN_OPS = {
@@ -82,13 +84,18 @@ _SERIES_FUNCS = {
 _FLOW_FUNCS = {"npv", "irr"}
 _CONSTANTS = {"pi": math.pi, "e": math.e}
 _RESERVED = (
-    frozenset(_SCALAR_FUNCS) | frozenset(_SERIES_FUNCS) | _FLOW_FUNCS | frozenset(_CONSTANTS)
+    frozenset(_SCALAR_FUNCS)
+    | frozenset(_SERIES_FUNCS)
+    | _FLOW_FUNCS
+    | frozenset(_CONSTANTS)
+    | {"returns"}
 )
 _MAX_ITEMS = 200  # expressions in one list: plenty for one call, bounded for safety
 _SUPPORTED = (
     "numbers, + - * / ** % //, (), a top-level [list] (rows may be [lists], for a grid) or "
     "{'label': expr or [list]}, names from `values` (series indexed with [i]), pi, e, and "
-    "abs/round/min/max/sqrt/exp/ln/log/log10/floor/ceil/sum/mean/median/stdev/var/len/npv/irr"
+    "abs/round/min/max/sqrt/exp/ln/log/log10/floor/ceil/sum/mean/median/stdev/var/len/npv/irr, "
+    "equal-length series division and returns(prices)"
 )
 
 Num = float | int
@@ -106,10 +113,7 @@ class _Eval:
     def scalar(self, node: ast.AST) -> Num:
         v = self.any(node)
         if isinstance(v, list):
-            raise ToolError(
-                "a series can only be indexed (x[0], x[-1]) or passed to sum/mean/median/stdev/var/"
-                "min/max/len/npv/irr"
-            )
+            raise ToolError("expected a scalar; index a series with x[i]")
         return v
 
     def item(self, node: ast.AST) -> Num:
@@ -122,7 +126,9 @@ class _Eval:
         """An item, or one level of [list]: a schedule, or a row of a grid."""
         if isinstance(node, ast.List | ast.Tuple):
             return [self.item(x) for x in node.elts]
-        return self.item(node)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return self.any(_parse(node.value))
+        return self.any(node)
 
     def any(self, node: ast.AST) -> Value:
         if isinstance(node, ast.Constant) and type(node.value) in (int, float):
@@ -134,7 +140,20 @@ class _Eval:
                 return _CONSTANTS[node.id]
             raise ToolError(f"unknown name '{node.id}': pass it in `values`")
         if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
-            return _BIN_OPS[type(node.op)](self.scalar(node.left), self.scalar(node.right))
+            left, right = self.any(node.left), self.any(node.right)
+            if isinstance(left, list) or isinstance(right, list):
+                if not (
+                    isinstance(node.op, ast.Div)
+                    and isinstance(left, list)
+                    and isinstance(right, list)
+                    and left
+                    and len(left) == len(right)
+                ):
+                    raise ToolError(
+                        "series arithmetic requires two nonempty equal-length series with /"
+                    )
+                return [a / b for a, b in zip(left, right, strict=True)]
+            return _BIN_OPS[type(node.op)](left, right)
         if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
             return _UNARY_OPS[type(node.op)](self.scalar(node.operand))
         if isinstance(node, ast.Subscript):
@@ -160,7 +179,14 @@ class _Eval:
             raise ToolError("expected a series (a name from `values`, or a [list] of numbers)")
         return v
 
-    def _call(self, name: str, args: list[ast.AST]) -> Num:
+    def _call(self, name: str, args: list[ast.AST]) -> Value:
+        if name == "returns":
+            if len(args) != 1:
+                raise ToolError("returns(prices) takes one price series")
+            prices = self.series(args[0])
+            if len(prices) < 2 or not all(math.isfinite(p) and p > 0 for p in prices):
+                raise ToolError("returns(prices) needs at least two finite positive prices")
+            return pct_returns(prices)
         if name == "npv":
             if len(args) != 2:
                 raise ToolError("npv(rate, flows) takes a rate and a series of flows")
@@ -195,15 +221,23 @@ def _resolve(values: dict[str, Any]) -> dict[str, Value]:
     """Named values, an expression string evaluated against the values before it."""
     resolved: dict[str, Value] = {}
     for name, value in values.items():
-        resolved[name] = _Eval(resolved).scalar(_parse(value)) if isinstance(value, str) else value
+        if isinstance(value, str):
+            value = _Eval(resolved).any(_parse(value))
+            _finite(value)
+        resolved[name] = value
     return resolved
 
 
 def _finite(answer: Answer) -> Answer:
     """The answer, once every number in it is finite (``1e308*10`` is not a result)."""
     rows = list(answer.values()) if isinstance(answer, dict) else answer
+    cells = 0
     for row in rows if isinstance(rows, list) else [rows]:
-        if not all(math.isfinite(x) for x in (row if isinstance(row, list) else [row])):
+        numbers = row if isinstance(row, list) else [row]
+        cells += len(numbers)
+        if cells > MAX_SERIES_LEN:
+            raise ToolError(f"a calc result can contain at most {MAX_SERIES_LEN} values")
+        if not all(math.isfinite(x) for x in numbers):
             raise ToolError("the result is not a finite number (it overflows or is undefined)")
     return answer
 
@@ -231,7 +265,7 @@ def safe_eval(expression: str, values: dict[str, Any] | None = None) -> Answer:
             if not all(isinstance(label, str) for label in labels):
                 raise ToolError("a dict's keys must be quoted labels")
             return _finite({label: ev.row(v) for label, v in zip(labels, body.values, strict=True)})
-        return _finite(ev.scalar(body))
+        return _finite(ev.any(body))
     except ZeroDivisionError as err:
         raise ToolError("division by zero") from err
     except OverflowError as err:
@@ -279,7 +313,7 @@ class CalcRequest(BaseModel):
         return v
 
 
-_ShownRow = list[Exact] | Exact
+_ShownRow = Annotated[list[Exact], hint(rows=12)] | Exact
 _Shown = dict[str, _ShownRow] | list[_ShownRow] | Exact
 
 
@@ -290,7 +324,7 @@ class CalcOutput(Output):
     ``series`` the length of each named series."""
 
     expression: Code
-    result: Annotated[_Shown, hint(rows=_MAX_ITEMS)]  # every value asked for is shown
+    result: Annotated[_Shown, hint(rows=_MAX_ITEMS)]  # long named series show a preview
     inputs: dict[str, Exact | Code] = {}
     series: dict[str, Count] = {}
 

@@ -188,7 +188,11 @@ def _apply_tail(item: Any, tail_steps: tuple[_Step, ...], raw: str) -> Any | Cha
 
 # a reference inside text: dotted keys and literal indexers; a computed index (``[i]``) and
 # anything glued to a preceding word stay with the text
-_EMBEDDED_RE = re.compile(r"(?<![\w.])prev:e\d+(?:\.\w+|\[(?:(?:-?\d+)?:(?:-?\d+)?|-?\d+|\*)\])*")
+_INDEXER_PATTERN = r"\[(?:(?:-?\d+)?:(?:-?\d+)?|-?\d+|\*)\]"
+_EMBEDDED_RE = re.compile(rf"(?<![\w.])prev:e\d+(?:\.\w+|{_INDEXER_PATTERN})*")
+# Standalone values can use qualified keys like XIST:LOGO. Do not widen the grammar for
+# references embedded in expressions, where a colon may instead separate a dict key and value.
+_WHOLE_VALUE_REF_RE = re.compile(rf"prev:e\d+(?:\.\w+(?::\w+)*|{_INDEXER_PATTERN})*")
 
 
 def embed_references(
@@ -226,8 +230,13 @@ def embed_references(
         return _EMBEDDED_RE.sub(_name, text)
 
     text = _embed(args.get(text_field))
-    values = {k: _embed(v) for k, v in given.items()}
-    if not lifted:
+    values = {
+        k: v.strip()
+        if isinstance(v, str) and _WHOLE_VALUE_REF_RE.fullmatch(v.strip())
+        else _embed(v)
+        for k, v in given.items()
+    }
+    if not lifted and values == given:
         return args, {}
     return {**args, text_field: text, values_field: {**lifted, **values}}, lifted
 

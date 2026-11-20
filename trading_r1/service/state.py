@@ -28,6 +28,7 @@ from trading_r1.runtime.session.store import SessionStore, default_sessions_dir
 from trading_r1.scheduler import JobStore, Scheduler
 from trading_r1.service import preferences
 from trading_r1.service.syncing import SyncRuntime
+from trading_r1.state.credentials import overlay
 from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX, catalog_context
 
 _LOG = logging.getLogger(__name__)
@@ -83,14 +84,34 @@ def sync_kick() -> None:
         sync().kick()
 
 
+def istfin_configured() -> bool:
+    return bool(overlay().get("ISTFIN_API_KEY", "").strip())
+
+
+def session_uses_istfin(session_id: str | None) -> bool:
+    """Only session kinds already excluded from sync can use IstFin."""
+    return bool(
+        session_id
+        and (
+            session_id.startswith(ISTFIN_SESSION_PREFIX)
+            or (session_id.startswith(DOCUMENT_SESSION_PREFIX) and istfin_configured())
+        )
+    )
+
+
 def prompt_overhead_of(
-    session_id: str | None, mode: str | None = None, document_context: str | None = None
+    session_id: str | None,
+    mode: str | None = None,
+    document_context: str | None = None,
+    *,
+    use_istfin: bool | None = None,
 ) -> int:
     """What the next request of a session carries beside its history."""
     if document_context is None:
         use_documents = bool(session_id and session_id.startswith(DOCUMENT_SESSION_PREFIX))
         document_context = catalog_context() if use_documents else ""
-    use_istfin = bool(session_id and session_id.startswith(ISTFIN_SESSION_PREFIX))
+    if use_istfin is None:
+        use_istfin = session_uses_istfin(session_id)
     return prompt_overhead(
         SESSIONS.history(session_id),
         skills=default_skill_registry(),

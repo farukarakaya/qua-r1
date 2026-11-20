@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
+import math
+import re
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
@@ -35,9 +38,13 @@ _PROPERTIES = {
 _NOTES = {
     "dividends": "Provider-reported amounts in TRY per share; not adjusted here for later splits.",
     "capital_changes": "Native paid rights and bonus capital percentages, not split multipliers.",
+    "corporate_actions": (
+        "Latest dividends and capital changes by action date. Dividend amounts are in TRY per "
+        "share and not adjusted here for later splits. BIST price returns exclude cash dividends."
+    ),
     "filing_calendar": "Expected KAP filing windows, not confirmed earnings dates.",
     "disclosure": "Text from the KAP disclosure page; attachments are not included.",
-    "screener": "Market capitalization is in million USD; yields and margins are percentages.",
+    "screener": "Provider-native columns. Use data.market.bist_screen for typed USD screening.",
 }
 
 
@@ -52,6 +59,7 @@ class BistDataRequest(BaseModel):
         "cash_flow",
         "dividends",
         "capital_changes",
+        "corporate_actions",
         "holders",
         "etf_holders",
         "filing_calendar",
@@ -104,6 +112,78 @@ def _rows(data: Any, limit: int | None = None) -> list[dict[str, Any]]:
     return json.loads(data.to_json(orient="records", date_format="iso"))
 
 
+def _parse_actions(body: Any, ticker: str) -> list[dict[str, Any]]:
+    error = f"{_IS} returned invalid corporate actions for XIST:{ticker}."
+    records = body.get("d") if isinstance(body, dict) else None
+    try:
+        if isinstance(records, str):
+            records = json.loads(records)
+        if not isinstance(records, list):
+            raise ValueError
+    except (ValueError, RecursionError):
+        raise ToolError(error) from None
+
+    def number(row: dict, field: str) -> float | None:
+        raw = row.get(field)
+        if raw is None or raw == "":
+            return None
+        value = float(raw)
+        if isinstance(raw, bool) or not math.isfinite(value) or value < 0:
+            raise ValueError
+        return value
+
+    def rounded(value: float | None) -> float | None:
+        return round(value, 2) if value is not None else None
+
+    zone = bist.istanbul()
+    events = []
+    for row in records:
+        code = row.get("SHT_KODU") if isinstance(row, dict) else None
+        if not isinstance(code, str) or not re.fullmatch(r"[0-9]{2}", code):
+            raise ToolError(error)
+        if code not in {"01", "02", "03", "04", "09"}:
+            continue  # administrative record, not a cash payout or capital increase
+        try:
+            stamp = number(row, "SHHE_TARIH")
+            if not stamp:
+                raise ValueError
+            date = (
+                dt.datetime.fromtimestamp(stamp / 1000, zone)
+                .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+                .isoformat(timespec="milliseconds")
+            )
+            if code == "04":
+                gross = number(row, "SHHE_NAKIT_TM_ORAN")
+                if not gross:
+                    raise ValueError
+                event = {
+                    "action": "dividend",
+                    "Amount": round(gross / 100, 4),
+                    "GrossRate": rounded(gross),
+                    "NetRate": rounded(number(row, "SHHE_NAKIT_TM_ORAN_NET")),
+                    "TotalDividend": number(row, "SHHE_NAKIT_TM_TUTAR"),
+                }
+            else:
+                rights = number(row, "SHHE_BDLI_ORAN")
+                bonus_capital = number(row, "SHHE_BDSZ_IK_ORAN")
+                bonus_dividend = number(row, "SHHE_BDSZ_TM_ORAN")
+                if (code in {"01", "03"} and not rights) or (
+                    code in {"02", "03", "09"} and not (bonus_capital or bonus_dividend)
+                ):
+                    raise ValueError
+                event = {
+                    "action": "capital_change",
+                    "Capital": number(row, "HSP_BOLUNME_SONRASI_SERMAYE"),
+                    "RightsIssue": rounded(rights),
+                    "BonusFromCapital": rounded(bonus_capital),
+                    "BonusFromDividend": rounded(bonus_dividend),
+                }
+            events.append({"Date": date, **event})
+        except (ValueError, TypeError, OverflowError, OSError):
+            raise ToolError(f"{error} Could not parse event type {code}.") from None
+    return sorted(events, key=lambda row: (row["Date"], row["action"]), reverse=True)
+
+
 def _fetch(bp: Any, req: BistDataRequest, ticker: str | None) -> tuple[list[dict[str, Any]], str]:
     dataset = req.dataset
     if dataset == "companies":
@@ -150,6 +230,13 @@ def _fetch(bp: Any, req: BistDataRequest, ticker: str | None) -> tuple[list[dict
                 "truncated": len(text) > 12000,
             }
         ], _KAP
+    if dataset == "corporate_actions":
+        from borsapy._providers.isyatirim import get_isyatirim_provider
+
+        # Both action types come from the same endpoint. The public property getters fetch
+        # it separately and can turn an outage into an apparently empty action list.
+        body = get_isyatirim_provider()._fetch_sermaye_data(ticker)
+        return _parse_actions(body, ticker)[: req.limit], _IS
     stock = bp.Ticker(ticker)
     if dataset in _STATEMENTS:
         method = getattr(stock, _STATEMENTS[dataset])
@@ -213,12 +300,13 @@ SPEC = ToolSpec(
     tier="deferred",
     description=(
         "BIST financial statements, corporate actions, profile, ownership, analyst targets, "
-        "KAP filing calendar, disclosure text, index members and screening via borsapy. "
+        "KAP filing calendar, disclosure text and index members via borsapy. "
+        "Use data.market.bist_screen for full-universe screening. "
         "Use XIST:THYAO or THYAO.IS for a company and XIST:XU100 for an index. "
         "For disclosure text, pass disclosure_id without a symbol. "
         "Use data.market.news for recent KAP disclosures and data.market.prices for OHLCV. "
         "Statements preserve native line items; use financial_group=UFRS for banks. "
-        "Use both dividends and capital_changes for corporate actions. "
+        "Use corporate_actions for recent dividends and capital changes. "
         "No U.S. SEC concepts, analyst EPS forecasts, or confirmed earnings dates are inferred."
     ),
     request_schema=BistDataRequest,

@@ -84,15 +84,23 @@ class BistProviderTests(unittest.IsolatedAsyncioTestCase):
                         "SHHE_TARIH": stamp,
                         "SHHE_BDLI_ORAN": 50,
                         "SHHE_BDSZ_IK_ORAN": 25,
+                        "SHHE_BDSZ_TM_ORAN": 0,
+                        "HSP_BOLUNME_SONRASI_SERMAYE": 1000,
                     },
-                    {"SHT_KODU": "04", "SHHE_TARIH": stamp, "SHHE_NAKIT_TM_ORAN": 225},
+                    {
+                        "SHT_KODU": "04",
+                        "SHHE_TARIH": stamp,
+                        "SHHE_NAKIT_TM_ORAN": 225,
+                        "SHHE_NAKIT_TM_ORAN_NET": 200,
+                        "SHHE_NAKIT_TM_TUTAR": 1000,
+                    },
                 ]
             )
         }
         with (
             IsYatirimProvider() as provider,
             patch.object(provider, "_cache", Cache()),
-            patch.object(provider, "_fetch_sermaye_data", return_value=raw),
+            patch.object(provider, "_fetch_sermaye_data", return_value=raw) as fetch,
             patch("borsapy._providers.isyatirim.get_isyatirim_provider", return_value=provider),
             patch("borsapy._providers.isyatirim.datetime", UTCClock),
         ):
@@ -102,11 +110,74 @@ class BistProviderTests(unittest.IsolatedAsyncioTestCase):
             dividends = await bist_data.SPEC.handler(
                 bist_data.BistDataRequest(symbol="THYAO.IS", dataset="dividends")
             )
+            fetch.reset_mock()
+            combined = await bist_data.SPEC.handler(
+                bist_data.BistDataRequest(symbol="XIST:THYAO", dataset="corporate_actions")
+            )
+            fetch.assert_called_once_with("THYAO")
         (action,) = actions.payload["rows"]
         (dividend,) = dividends.payload["rows"]
         self.assertEqual(action["Date"][:10], "2024-06-03")
         self.assertEqual((action["RightsIssue"], action["BonusFromCapital"]), (50, 25))
         self.assertEqual((dividend["Date"][:10], dividend["Amount"]), ("2024-06-03", 2.25))
+        self.assertEqual(
+            combined.payload["rows"],
+            [dividend | {"action": "dividend"}, action | {"action": "capital_change"}],
+        )
+        self.assertIn("exclude cash dividends", combined.text)
+
+    async def test_corporate_actions_does_not_treat_upstream_failure_as_empty(self) -> None:
+        from borsapy._providers.isyatirim import IsYatirimProvider
+        from borsapy.exceptions import APIError
+
+        request = bist_data.BistDataRequest(symbol="XIST:THYAO", dataset="corporate_actions")
+        with (
+            IsYatirimProvider() as provider,
+            patch.object(provider, "_fetch_sermaye_data", side_effect=APIError("outage")) as fetch,
+            patch("borsapy._providers.isyatirim.get_isyatirim_provider", return_value=provider),
+        ):
+            with self.assertRaisesRegex(ToolError, "could not fetch corporate_actions"):
+                await bist_data.SPEC.handler(request)
+            fetch.assert_called_once()
+            fetch.side_effect = None
+            for body in ({"error": "unavailable"}, {"d": "bad"}, {"d": [{"error": "unavailable"}]}):
+                with (
+                    self.subTest(body=body),
+                    self.assertRaisesRegex(ToolError, "invalid corporate actions"),
+                ):
+                    fetch.return_value = body
+                    await bist_data.SPEC.handler(request)
+            fetch.return_value = {"d": "[]"}
+            with self.assertRaisesRegex(ToolError, "No corporate_actions available"):
+                await bist_data.SPEC.handler(request)
+
+    async def test_malformed_corporate_event_does_not_return_partial_results(self) -> None:
+        stamp = 1738587600000
+        cap = {"SHT_KODU": "01", "SHHE_TARIH": stamp, "SHHE_BDLI_ORAN": 100}
+        dividend = {"SHT_KODU": "04", "SHHE_TARIH": stamp, "SHHE_NAKIT_TM_ORAN": 225}
+        provider = SimpleNamespace(_fetch_sermaye_data=Mock())
+        request = bist_data.BistDataRequest(symbol="XIST:THYAO", dataset="corporate_actions")
+        with patch("borsapy._providers.isyatirim.get_isyatirim_provider", return_value=provider):
+            for row in (
+                {"SHT_KODU": "04", "SHHE_TARIH": stamp},
+                dividend | {"SHHE_NAKIT_TM_ORAN": "N/A"},
+                dividend | {"SHHE_NAKIT_TM_ORAN": "NaN"},
+                dividend | {"SHHE_TARIH": None},
+                cap | {"SHHE_BDLI_ORAN": None},
+                {"SHT_KODU": "02", "SHHE_TARIH": stamp},
+            ):
+                provider._fetch_sermaye_data.return_value = {"d": [cap, row]}
+                with (
+                    self.subTest(row=row),
+                    self.assertRaisesRegex(ToolError, "Could not parse event"),
+                ):
+                    await bist_data.SPEC.handler(request)
+            provider._fetch_sermaye_data.return_value = {"d": [cap, {"SHT_KODU": "99"}, dividend]}
+            result = await bist_data.SPEC.handler(request)
+        payout, rights = result.payload["rows"]
+        self.assertEqual(payout["Amount"], 2.25)
+        self.assertIsNone(payout["NetRate"])
+        self.assertEqual(rights["RightsIssue"], 100)
 
     async def test_disclosure_uses_id_without_a_ticker(self) -> None:
         content = Mock(return_value="<header>Site menu</header><main><p>Pay alımı</p></main>")

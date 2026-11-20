@@ -67,14 +67,15 @@ is unchanged.
 
 Open the `/` palette and select **New session with PDFs…**. Then ask a normal research question,
 such as “Which Turkish stocks have the strongest analyst recommendations?” You do not need to name
-a PDF. The agent sees report summaries automatically and can use `read_doc` to open and cite pages.
-The catalog says when it cannot fit all reports. Large transcripts can be read in page ranges.
+a PDF. The agent receives a short filename preview, uses `search_docs` to find relevant reports
+and summaries across the local library, then uses `read_doc` to read and cite selected pages.
 Check material figures against the original PDF; OCR can misread tables and numbers.
 
-The selected model receives the summary catalog and any page text it reads. Document sessions
-are not enrolled in session sync; model requests and results are still logged locally. Use a
-regular new session to ask without the library. For the authenticated `/research` API, use a new
-`session_id` prefixed with `docs-` and reuse it for follow-ups. Other session IDs do not load PDFs.
+The selected model receives the preview and any summaries or page text returned by those tools.
+Document sessions are not enrolled in session sync; model requests and results are still logged
+locally. Use a regular new session to ask without the library. For the authenticated `/research`
+API, use a new `session_id` prefixed with `docs-` and reuse it for follow-ups. Other session IDs
+do not load PDFs.
 
 ## Reports, channels and jobs
 
@@ -119,8 +120,10 @@ The public PyPI borsapy build is not supported for this adapter. Ask for `XIST:T
 `THYAO.IS` in the price tools. borsapy uses TradingView for daily OHLCV in TRY, excluding
 the current Istanbul calendar date. Weekly
 and monthly bars are resampled; intraday bars are not available. Stock closes are split-adjusted
-only, so returns exclude cash dividends. Tauric continues to serve U.S. stocks and other
-existing instruments; failed BIST requests do not switch providers.
+only, so returns exclude cash dividends. Do not use borsapy's `Adj Close` as total returns:
+its cash dividends are in the original per-share units, including before bonus issues.
+Tauric continues to serve U.S. stocks and other existing instruments; failed BIST requests
+do not switch providers.
 
 For BIST quotes, use `data.market.quotes`. For recent KAP company disclosures, use
 `data.market.news` with the qualified symbol. These are official disclosures, not general
@@ -129,7 +132,9 @@ BIST companies. Known indices such as `XIST:XU100` also support daily price hist
 
 `data.market.bist` serves BIST company profiles, financial statements, dividends, capital
 changes (including paid rights), holders, analyst targets, expected filing windows, KAP
-disclosure text, index constituents, and stock screening. For example, request
+disclosure text, and index constituents. Use `dataset="corporate_actions"` for dividends and
+capital changes in one call. Malformed events fail the request rather than returning a partial
+history. For example, request
 `symbol="XIST:THYAO", dataset="income_statement", cadence="quarterly"`. For disclosure text,
 pass `dataset="disclosure"` and the numeric `disclosure_id` without a symbol. Financial statement
 line items are as reported by İş Yatırım, not normalized SEC data. For banks, select
@@ -137,9 +142,17 @@ line items are as reported by İş Yatırım, not normalized SEC data. For banks
 are not confirmed earnings release dates. The Tauric equity tools direct qualified BIST
 requests to the BIST tools instead of querying Tauric.
 
-Use daily bars for cross-market baskets. If any symbol fails, the whole basket fails.
-Alignment matches dates, not closing times, and leaves prices in their listing currencies.
-Convert to a common currency before optimizing.
+Use `data.market.bist_screen` to rank the full BIST screening universe (or specify an index).
+Market cap and 3-month average volume are in USD millions. Net margin and net income growth
+are forecasts, so verify them before relying on them. A failed filter or sort metric fails the
+screen. Failed display-only requests are listed under `unavailable_metrics`.
+
+For Turkish stock portfolios, the `bist-portfolio` skill uses a full-universe screen and compares
+USD portfolio risk against BIST 100. Use daily bars for cross-market baskets. If any symbol fails,
+the whole basket fails. Alignment matches dates, not closing times, and leaves prices in their
+listing currencies. Use `calc` to divide aligned TRY levels by `USDTRY=X` before optimizing.
+A valid TRY FX close is kept even if the rest of the candle is invalid. An invalid close fails the
+request. No prices are filled in.
 
 ### Use IstFin alongside borsapy
 
@@ -148,7 +161,8 @@ then launch the terminal with `uv run trading-r1` and ask your question. New ord
 include IstFin alongside borsapy and Tauric when the key is configured. These chats have
 archive sync off from the first turn, even if you never call IstFin.
 Without a key, new chats keep the usual settings. Resuming a chat preserves its original policy.
-PDF sessions, scheduled jobs and Telegram turns do not gain IstFin tools.
+PDF sessions also include IstFin whenever the key is configured and remain excluded from sync.
+Scheduled jobs and Telegram turns do not gain IstFin tools.
 API clients can `POST /sessions` and pass the returned `id` to `/research` for the same default.
 
 | Tool | Example request | What it returns |
