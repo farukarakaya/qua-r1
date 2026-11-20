@@ -43,6 +43,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextvars import ContextVar
 from typing import Any
 
+from trading_r1.runtime.checkpoint import DecisionCheckpoint
 from trading_r1.runtime.session import records
 from trading_r1.runtime.session.records import Entry
 
@@ -211,6 +212,12 @@ class Recording:
         except Exception:  # noqa: BLE001 (the record must not stop the run it records)
             _LOG.warning("the session record could not be written", exc_info=True)
             return []
+
+    def load_checkpoint(self) -> DecisionCheckpoint | None:
+        return None
+
+    def save_checkpoint(self, checkpoint: DecisionCheckpoint) -> None:
+        """Only local session turns have a decision checkpoint store."""
 
     # ----- model calls --------------------------------------------------------- #
 

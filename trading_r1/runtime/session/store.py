@@ -49,12 +49,16 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from trading_r1.runtime.checkpoint import DecisionCheckpoint
 from trading_r1.runtime.evidence import EvidenceRecord
 from trading_r1.runtime.run_state import Termination, harness_note
 from trading_r1.runtime.session import records
 from trading_r1.runtime.session.index import SessionIndex
 from trading_r1.runtime.session.recorder import Recording
 from trading_r1.runtime.session.records import Entry
+from trading_r1.state.fileio import MISSING, PrivateFileError, read_private_json, write_json
 from trading_r1.state.paths import state_dir
 
 _log = logging.getLogger(__name__)
@@ -167,6 +171,22 @@ class TurnRecorder(Recording):
         name = _KIND_CHARS.sub("_", kind.lower())
         self._store._append(self._id, [Entry(records.UI + name, data, self.turn, run=self.run)])
 
+    def load_checkpoint(self) -> DecisionCheckpoint | None:
+        try:
+            raw = read_private_json(self._store._checkpoint_path(self._id))
+            return None if raw is MISSING else DecisionCheckpoint.model_validate(raw)
+        except (PrivateFileError, ValidationError):
+            _log.warning("invalid local decision checkpoint for %s", self._id)
+            return None
+
+    def save_checkpoint(self, checkpoint: DecisionCheckpoint) -> None:
+        try:
+            write_json(
+                self._store._checkpoint_path(self._id), checkpoint.model_dump(), private=True
+            )
+        except OSError:
+            _log.warning("could not save local decision checkpoint for %s", self._id)
+
     def record_evidence(self, record: EvidenceRecord) -> None:
         """Append an evidence record to the log as it is made."""
         self.artifact(record.id, json.dumps(record.to_dict(), ensure_ascii=False), kind="evidence")
@@ -269,6 +289,10 @@ class SessionStore:
         if path.is_symlink():  # a link could lead out of the directory
             raise InvalidSessionIdError(f"invalid session id: {session_id[:40]!r}")
         return path
+
+    def _checkpoint_path(self, session_id: str) -> Path:
+        # Local working state, deliberately not part of the synced JSONL log.
+        return self._log(session_id).with_suffix(".checkpoint.json")
 
     def _append(self, session_id: str, entries: list[Entry]) -> list[str]:
         path = self._log(session_id)
@@ -454,6 +478,7 @@ class SessionStore:
     def delete(self, session_id: str) -> None:
         """Remove a session: its log and its index row. A session that is not there is a no-op."""
         path = self._log(session_id)
+        self._checkpoint_path(session_id).unlink(missing_ok=True)
         path.unlink(missing_ok=True)
         records.forget(path)
         self._inputs.pop(session_id, None)
