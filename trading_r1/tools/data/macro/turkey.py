@@ -9,7 +9,7 @@ import datetime as dt
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from trading_r1.contract.spec import Output, Provenance, Result, ToolError, ToolSpec, hint
 from trading_r1.contract.units import Code, Day, Number, Percent, Points, Text
@@ -29,12 +29,17 @@ EvdsCode = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9._-]+$")]
 
 
 class TurkeyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     period: Literal["6mo", "1y", "2y", "3y", "5y"] = "1y"
     view: Literal["snapshot", "series"] = Field(
         "snapshot", description="Latest readings and changes, or also the monthly histories."
     )
     evds_codes: list[EvdsCode] | None = Field(
-        None, max_length=8, description="Extra CBRT EVDS series to fetch. Requires EVDS_API_KEY."
+        None,
+        min_length=1,
+        max_length=8,
+        description="Extra CBRT EVDS series to fetch. Requires EVDS_API_KEY.",
     )
 
 
@@ -201,7 +206,6 @@ async def _handler(req: TurkeyRequest) -> Result:
             indicators[code] = (code, "as published")
     cpi_frame, bond_frame, evds_frame = await bist.fetch_turkey_macro(
         req.period,
-        True,
         [code for code, _ in indicators.values()],
         require_evds=bool(req.evds_codes),
         as_of=today,

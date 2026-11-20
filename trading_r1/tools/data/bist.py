@@ -100,14 +100,13 @@ async def run[T](subject: str, dataset: str, fetch: Callable[[Any], T]) -> T:
 
 async def fetch_turkey_macro(
     period: str,
-    include_evds: bool,
     evds_codes: list[str],
     *,
     require_evds: bool,
     as_of: dt.date,
 ) -> tuple[Any, Any, Any | None]:
     """Fetch CPI, USD Eurobond quotes and, if configured, one EVDS batch."""
-    key = (credentials.overlay().get("EVDS_API_KEY") or "").strip() if include_evds else ""
+    key = (credentials.overlay().get("EVDS_API_KEY") or "").strip()
     if require_evds and not key:
         raise ToolError("EVDS_API_KEY is required to query custom EVDS series.")
     months = 6 if period == "6mo" else int(period[:-1]) * 12

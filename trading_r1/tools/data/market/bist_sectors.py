@@ -10,7 +10,7 @@ import datetime as dt
 import statistics
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from trading_r1.contract.spec import Output, Provenance, Result, ToolError, ToolSpec, hint
 from trading_r1.contract.units import Code, Count, Day, Fraction, Number, Text
@@ -42,6 +42,8 @@ FX = "USDTRY=X"
 
 
 class BistSectorsRequest(PriceWindow):
+    model_config = ConfigDict(extra="forbid")
+
     interval: Literal["1d", "1wk", "1mo"] = Field(
         "1d", description="Daily, weekly or monthly bars. FX beta always uses daily returns."
     )
@@ -65,7 +67,7 @@ class BistSectorsRequest(PriceWindow):
 
 class BistSector(Output):
     symbol: Code
-    sector: Text
+    sector: Code
     try_return: Fraction
     usd_return: Fraction
     excess_usd_return: Fraction
@@ -170,8 +172,8 @@ async def _handler(req: BistSectorsRequest) -> Result:
     ]
     notes = [
         "BIST sector and benchmark returns are price returns, excluding cash dividends.",
-        "FX beta is historical sensitivity to TRY depreciation (rising USDTRY), not a forecast. "
-        "Matching dates do not imply simultaneous closes.",
+        "FX beta is historical TRY-return sensitivity to TRY depreciation (rising USDTRY), "
+        "not a forecast. Matching dates do not imply simultaneous closes.",
     ]
     if not fx_variance:
         notes.append(
