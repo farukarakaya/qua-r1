@@ -89,7 +89,9 @@ def _to_input(profile: ModelProfile, messages: list[dict[str, Any]]) -> list[dic
 
 def _turn_from_response(profile: ModelProfile, resp: Any) -> AssistantTurn:
     """Normalize a Responses ``Response`` into an AssistantTurn (+ native items)."""
-    output = list(getattr(resp, "output", None) or [])
+    status = getattr(resp, "status", None)
+    # A terminal incomplete response can still contain an unfinished function-call item.
+    output = list(getattr(resp, "output", None) or []) if status == "completed" else []
     calls: list[ToolCall] = []
     for it in output:
         if it.type == "function_call":
@@ -97,14 +99,15 @@ def _turn_from_response(profile: ModelProfile, resp: Any) -> AssistantTurn:
     text = getattr(resp, "output_text", "") or ""
     if calls:
         finish = "tool_calls"
-    elif getattr(resp, "status", None) == "incomplete" and (
+    elif status == "incomplete" and (
         getattr(getattr(resp, "incomplete_details", None), "reason", None) == "max_output_tokens"
     ):
         finish = "length"
-    elif not output and not text:
+    elif status != "completed" or (not output and not text):
         # no output at all (e.g. a refusal/blocked response): signal failure so the
         # loop's recovery treats it like the chat provider's empty-choices case.
         finish = "error"
+        text = ""  # Partial text from a failed response is not an actionable answer.
     else:
         finish = "stop"
     native = [
