@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from dataclasses import asdict
 from unittest.mock import AsyncMock
 
 from pydantic import BaseModel
@@ -16,6 +17,8 @@ from trading_r1.runtime.agent import Agent
 from trading_r1.runtime.evidence import EvidenceStore
 from trading_r1.runtime.session import recorder
 from trading_r1.runtime.session.store import SessionStore
+from trading_r1.runtime.sources import cite_source, source_scope
+from trading_r1.tools.web.cache import FetchCache
 
 
 class FilingRequest(BaseModel):
@@ -24,9 +27,13 @@ class FilingRequest(BaseModel):
 
 class FilingOutput(Output):
     excerpt: Text
+    price: int | None = None
 
 
 async def filing(req: FilingRequest) -> Result:
+    if req.section == -1:
+        cite_source("https://example.test/quote", "Fixture quote", "A share was marked at 45.")
+        return Result(FilingOutput(excerpt="Quote dated 2024-01-02", price=45))
     text = "\n".join(
         f"Synthetic filing section {req.section}, note {n}: cash generation remains uncertain."
         for n in range(100)
@@ -76,7 +83,7 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
                     {
                         "fact": "Quote 45",
                         "evidence_id": "e1",
-                        "path": "result.price",
+                        "path": "price",
                         "citations": [1],
                     }
                 ],
@@ -88,15 +95,13 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
             if with_checkpoint:
                 plan["decision"] = notes
             first = turn(
-                ("price", "calc", {"expression": '{"price":45}'}), ("plan", "update_plan", plan)
+                ("price", "fixture_filing", {"section": -1}), ("plan", "update_plan", plan)
             )
             responses = [first]
             for i in range(5):
                 responses.append(turn((f"section{i}", "fixture_filing", {"section": i})))
             responses.append(
-                turn(
-                    ("mark", "calc", {"values": {"q": "prev:e1.result.price"}, "expression": "q*2"})
-                )
+                turn(("mark", "calc", {"values": {"q": "prev:e1.price"}, "expression": "q*2"}))
             )
             inputs = []
 
@@ -109,9 +114,10 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             agent.provider.generate = AsyncMock(side_effect=generate)
-            with recorder.bind(rec):
-                result = await agent.run("Review this portfolio")
-            rec.end(result)
+            cache = FetchCache()
+            with recorder.bind(rec), source_scope(cache):
+                result = await agent.run("Review this portfolio", on_event=rec)
+            rec.end({**result, "citations": [asdict(c) for c in cache.citations]})
             return inputs[-1], result, evidence
 
         with tempfile.TemporaryDirectory() as temp:
@@ -142,10 +148,10 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(checkpoint.notes.unresolved, ["NAV unknown; no sale authorized"])
             fact = checkpoint.notes.facts[0]
             restored = EvidenceStore.from_list(reopened.evidence("fixture"))
-            self.assertEqual(
-                (fact.evidence_id, fact.path, fact.citations), ("e1", "result.price", [1])
-            )
-            self.assertEqual(restored.get(fact.evidence_id).payload["result"]["price"], 45)
+            self.assertEqual((fact.evidence_id, fact.path, fact.citations), ("e1", "price", [1]))
+            self.assertEqual(restored.get(fact.evidence_id).payload["price"], 45)
+            (source,) = reopened.sources("fixture")
+            self.assertEqual((source["index"], source["record"]), (1, fact.evidence_id))
             self.assertFalse(
                 any(m.get("type") == "decision.checkpoint" for m in reopened.lines("fixture"))
             )
