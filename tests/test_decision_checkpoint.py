@@ -14,6 +14,7 @@ from trading_r1.contract.units import Text
 from trading_r1.providers.base import AssistantTurn, ToolCall
 from trading_r1.providers.profiles import ModelProfile
 from trading_r1.runtime.agent import Agent
+from trading_r1.runtime.checkpoint import DecisionCheckpoint, DecisionNotes
 from trading_r1.runtime.evidence import EvidenceStore
 from trading_r1.runtime.session import recorder
 from trading_r1.runtime.session.store import SessionStore
@@ -105,8 +106,14 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
             responses = [first]
             for i in range(5):
                 responses.append(turn((f"section{i}", "fixture_filing", {"section": i})))
+            done_plan = {"steps": [{"step": "Reconcile the position", "status": "completed"}]}
+            if with_checkpoint:
+                done_plan["decision"] = {**notes, "next_calculation": "Write report"}
             responses.append(
-                turn(("mark", "calc", {"values": {"q": "prev:e1.price"}, "expression": "q*2"}))
+                turn(
+                    ("mark", "calc", {"values": {"q": "prev:e1.price"}, "expression": "q*2"}),
+                    ("plan_done", "update_plan", done_plan),
+                )
             )
             inputs = []
 
@@ -179,3 +186,69 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(
                 any(m.get("type") == "decision.checkpoint" for m in reopened.lines("fixture"))
             )
+
+    def test_uncheckpointed_round_stays_whole_until_refreshed_or_aged_out(self):
+        notes = DecisionNotes(
+            mandate="Hold unless thesis breaks",
+            holdings=["HOLDCO: 2 shares"],
+            facts=[],
+            eligible_actions=["Hold"],
+            unresolved=[],
+            next_calculation="Check macro",
+        )
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "Review"},
+            {"role": "assistant", "tool_calls": [{"id": "c1"}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "round1 full", "_pointer": "[e1]"},
+            {"role": "assistant", "tool_calls": [{"id": "c2"}]},
+            {"role": "tool", "tool_call_id": "c2", "content": "round2 full", "_pointer": "[e2]"},
+            {"role": "assistant", "tool_calls": [{"id": "c3"}]},
+            {"role": "tool", "tool_call_id": "c3", "content": "round3 full", "_pointer": "[e3]"},
+        ]
+        # Committed in round 1: rounds 2 and 3 are un-checkpointed and both stay whole.
+        stale_round = DecisionCheckpoint(notes=notes, run="r1", round=1, recent_evidence={})
+        projected = stale_round.project(messages, current_run="r1")
+        by_id = {m["tool_call_id"]: m["content"] for m in projected if m.get("role") == "tool"}
+        self.assertEqual(by_id["c1"], "[e1]")
+        self.assertEqual(by_id["c2"], "round2 full")
+        self.assertIn("round3 full", by_id["c3"])
+
+        # Refreshed in round 3: earlier rounds were just summarized and collapse immediately.
+        refreshed = DecisionCheckpoint(notes=notes, run="r1", round=3, recent_evidence={})
+        projected_now = refreshed.project(messages, current_run="r1")
+        by_id_now = {
+            m["tool_call_id"]: m["content"] for m in projected_now if m.get("role") == "tool"
+        }
+        self.assertEqual(by_id_now["c1"], "[e1]")
+        self.assertEqual(by_id_now["c2"], "[e2]")
+        self.assertIn("round3 full", by_id_now["c3"])
+
+    def test_prior_run_checkpoint_does_not_compact_follow_up_run_tools(self):
+        notes = DecisionNotes(
+            mandate="Hold unless thesis breaks",
+            holdings=["HOLDCO: 2 shares"],
+            facts=[],
+            eligible_actions=["Hold"],
+            unresolved=[],
+            next_calculation="Done",
+        )
+        prior = DecisionCheckpoint(notes=notes, run="old-run", round=1, recent_evidence={})
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "Earlier review"},
+            {"role": "assistant", "content": "Earlier answer."},
+            {"role": "user", "content": "Compare banks vs telecoms"},
+            {"role": "assistant", "tool_calls": [{"id": "n1"}]},
+            {"role": "tool", "tool_call_id": "n1", "content": "fresh round1", "_pointer": "[e9]"},
+            {"role": "assistant", "tool_calls": [{"id": "n2"}]},
+            {"role": "tool", "tool_call_id": "n2", "content": "fresh round2", "_pointer": "[e10]"},
+        ]
+        projected = prior.project(messages, current_run="new-run")
+        by_id = {m["tool_call_id"]: m["content"] for m in projected if m.get("role") == "tool"}
+        self.assertEqual(by_id["n1"], "fresh round1")
+        self.assertEqual(by_id["n2"], "fresh round2")
+        self.assertNotIn("[Decision checkpoint:", by_id["n2"])
+        self.assertIn("Earlier answer.", projected[2]["content"])
+        self.assertIn("previous run", projected[2]["content"])
+        self.assertEqual(projected[3], {"role": "user", "content": "Compare banks vs telecoms"})

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from trading_r1.runtime.evidence import EvidenceStore
 
@@ -17,6 +17,8 @@ EvidenceID = Annotated[str, Field(pattern=r"^e\d+$")]
 
 
 class DecisionFact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     fact: Short
     evidence_id: EvidenceID
     path: Short = ""
@@ -25,6 +27,8 @@ class DecisionFact(BaseModel):
 
 
 class DecisionNotes(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mandate: Short
     holdings: list[Short] = Field(max_length=32)
     quote_date: Short = ""
@@ -50,7 +54,7 @@ class DecisionCheckpoint(BaseModel):
             run=run,
             round=round_,
             recent_evidence={
-                r.id: str(r.provenance.get("as_of") or "date not supplied") + " | " + r.call[:200]
+                r.id: f"{r.provenance.get('as_of') or 'date not supplied'} | {r.call[:200]}"[:320]
                 for r in store.all()[-24:]
             },
         )
@@ -71,8 +75,31 @@ class DecisionCheckpoint(BaseModel):
             + "]\n"
             + json.dumps(self.model_dump(), ensure_ascii=False, separators=(",", ":"))
         )
+        if prior:
+            # A prior-run checkpoint is read-only context for the new turn; it never compacts
+            # fresh tool outputs in a run that has not committed its own checkpoint.
+            projected = list(history)
+            last_user = next(
+                (i for i in reversed(range(len(projected))) if projected[i].get("role") == "user"),
+                None,
+            )
+            if last_user is not None and last_user > 0:
+                prev = projected[last_user - 1]
+                if (
+                    prev.get("role") == "assistant"
+                    and not prev.get("tool_calls")
+                    and isinstance(prev.get("content"), str)
+                ):
+                    projected[last_user - 1] = {**prev, "content": prev["content"] + note}
+                else:
+                    projected.insert(last_user, {"role": "assistant", "content": note.lstrip()})
+            return [system, *projected]
+
         tool_rounds = [i for i, m in enumerate(history) if m.get("tool_calls")]
-        cutoff = tool_rounds[-1] if tool_rounds else 0
+        # Collapse through the prior round only when decision notes were refreshed this round;
+        # otherwise keep two recent rounds whole so un-checkpointed research survives follow-ups.
+        keep = 1 if self.round >= len(tool_rounds) else 2
+        cutoff = tool_rounds[-keep] if len(tool_rounds) >= keep else 0
         # Carry working notes as data, never as system or user instructions. Keep the
         # provider's native assistant tool calls paired with their original results.
         last_result = next(
@@ -85,7 +112,4 @@ class DecisionCheckpoint(BaseModel):
             if i == last_result:
                 message = {**message, "content": message["content"] + note}
             projected.append(message)
-        if last_result is None and len(history) > 1 and history[-1].get("role") == "user":
-            # Reopened after an interruption/compaction: no tool pair to attach to.
-            projected.insert(-1, {"role": "assistant", "content": note.lstrip()})
         return projected

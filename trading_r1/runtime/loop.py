@@ -215,11 +215,9 @@ class Run:
     async def tool_step(self, turn: AssistantTurn) -> None:
         """Dispatch the message's calls and append their results."""
         state = self.state
-        notes = (
-            self.checkpoint.notes
-            if self.checkpoint and self.checkpoint.run == self.session_state.run
-            else None
-        )
+        same_run = self.checkpoint is not None and self.checkpoint.run == self.session_state.run
+        notes = self.checkpoint.notes if same_run else None
+        checkpoint_round = self.checkpoint.round if same_run else None
         for tc in turn.tool_calls:
             result = await self._execute(tc)
             message = result.to_message(tc.id)
@@ -227,14 +225,18 @@ class Run:
                 decision = getattr(result.validated_args, "decision", None)
                 if isinstance(decision, DecisionNotes):
                     notes = decision
-            if result.ok and tc.name == "evidence" and (id_ := result.args.get("id")):
+                    checkpoint_round = state.rounds
+            if result.ok and result.name == "evidence" and (id_ := result.args.get("id")):
                 path = result.args.get("path")
                 message["_pointer"] = f"[Evidence read: {id_}{'.' + path if path else ''}]"
             state.messages.append(message)
             state.tool_log.append(result.to_log())
-        if notes is not None:
+        if notes is not None and checkpoint_round is not None:
             self.checkpoint = DecisionCheckpoint.commit(
-                notes, self.session_state.evidence, run=self.session_state.run, round_=state.rounds
+                notes,
+                self.session_state.evidence,
+                run=self.session_state.run,
+                round_=checkpoint_round,
             )
             if self.recording is not None:
                 self.recording.save_checkpoint(self.checkpoint)
