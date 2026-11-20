@@ -28,12 +28,15 @@ class FilingRequest(BaseModel):
 class FilingOutput(Output):
     excerpt: Text
     price: int | None = None
+    quote_date: str | None = None
 
 
 async def filing(req: FilingRequest) -> Result:
     if req.section == -1:
         cite_source("https://example.test/quote", "Fixture quote", "A share was marked at 45.")
-        return Result(FilingOutput(excerpt="Quote dated 2024-01-02", price=45))
+        return Result(
+            FilingOutput(excerpt="Quote dated 2024-01-02", price=45, quote_date="2024-01-02")
+        )
     text = "\n".join(
         f"Synthetic filing section {req.section}, note {n}: cash generation remains uncertain."
         for n in range(100)
@@ -73,6 +76,7 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
                 profile=ModelProfile(name="mock", model="mock"),
                 registry=registry,
                 evidence=evidence,
+                grounding_review=True,
             )
             notes = {
                 "mandate": "Hold unless thesis breaks",
@@ -93,7 +97,8 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
             }
             plan = {"steps": [{"step": "Reconcile the position", "status": "in_progress"}]}
             if with_checkpoint:
-                plan["decision"] = notes
+                # Both container coercion and evidence resolution happen before the handler.
+                plan["decision"] = json.dumps({**notes, "quote_date": "prev:e1.quote_date"})
             first = turn(
                 ("price", "fixture_filing", {"section": -1}), ("plan", "update_plan", plan)
             )
@@ -118,7 +123,12 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
             with recorder.bind(rec), source_scope(cache):
                 result = await agent.run("Review this portfolio", on_event=rec)
             rec.end({**result, "citations": [asdict(c) for c in cache.citations]})
-            return inputs[-1], result, evidence
+            # The final, tool-less grounding pass must see the original supporting excerpt.
+            grounding = inputs[-1]
+            cited = next(m for m in grounding if m.get("tool_call_id") == "price")
+            self.assertIn("Quote dated 2024-01-02", cited["content"])
+            self.assertIn("[1]", grounding[-1]["content"])
+            return inputs[-2], result, evidence
 
         with tempfile.TemporaryDirectory() as temp:
             baseline, result_a, a = await replay(SessionStore(f"{temp}/off"), False)
@@ -138,11 +148,25 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
                 return len(json.dumps(messages, ensure_ascii=False).encode())
 
             self.assertLess(wire(compact), wire(baseline) / 2)
+            self.assertEqual(baseline[0], compact[0])
+            notes_messages = [m for m in compact if "[Decision checkpoint:" in m["content"]]
+            self.assertEqual([m["role"] for m in notes_messages], ["tool"])
 
             reopened = SessionStore(f"{temp}/on")
             rec = reopened.begin("fixture", "Continue", {})
             checkpoint = rec.load_checkpoint()
             self.assertIsNotNone(checkpoint)
+            correction = {"role": "user", "content": "My mandate has changed; do not sell."}
+            reopened_context = [
+                baseline[0],
+                {"role": "user", "content": "Earlier review"},
+                correction,
+            ]
+            projected = checkpoint.project(reopened_context, current_run="new-run")
+            self.assertEqual(projected[0], baseline[0])
+            self.assertEqual(projected[-2]["role"], "assistant")
+            self.assertIn("previous run", projected[-2]["content"])
+            self.assertEqual(projected[-1], correction)
             self.assertEqual(checkpoint.notes.quote_date, "2024-01-02")
             self.assertEqual(checkpoint.notes.fx_date, "2024-01-01")
             self.assertEqual(checkpoint.notes.unresolved, ["NAV unknown; no sale authorized"])

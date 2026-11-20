@@ -223,8 +223,10 @@ class Run:
         for tc in turn.tool_calls:
             result = await self._execute(tc)
             message = result.to_message(tc.id)
-            if result.ok and tc.name == "update_plan" and result.args.get("decision") is not None:
-                notes = DecisionNotes.model_validate(result.args["decision"])
+            if result.ok and result.name == "update_plan":
+                decision = getattr(result.validated_args, "decision", None)
+                if isinstance(decision, DecisionNotes):
+                    notes = decision
             if result.ok and tc.name == "evidence" and (id_ := result.args.get("id")):
                 path = result.args.get("path")
                 message["_pointer"] = f"[Evidence read: {id_}{'.' + path if path else ''}]"
@@ -344,7 +346,8 @@ class Run:
         review = f"{GROUNDING_REVIEW_PROMPT}\n\n---\n\n{draft}"
         try:
             response = await self.agent.caller.turn(
-                [*self.model_messages(), {"role": "user", "content": review}],
+                # This pass cannot use evidence tools to restore projected pointers.
+                [*messages, {"role": "user", "content": review}],
                 None,
                 purpose=Purpose.OPTIONAL,
             )
