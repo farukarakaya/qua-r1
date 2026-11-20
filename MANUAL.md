@@ -170,7 +170,11 @@ API clients can `POST /sessions` and pass the returned `id` to `/research` for t
 | `data.market.istfin_news` | `symbols=["THYAO.IS"], types=["FR"]` | One page of KAP filings with UTC publication times and a cursor. Date filters use Istanbul days. |
 | `data.market.istfin_disclosure` | `disclosure_id` from a search result | KAP content blocks, correction flags and attachment links. Attachments are not downloaded. |
 | `data.market.istfin_ratios` | `symbol="XIST:THYAO", metrics=["pe","pb"]` | Daily valuation multiples with the reporting period and source used on each day. |
-| `data.market.istfin_index` | `symbol="XIST:XU100"` | Current constituents, percentage weights and membership date, not a historical universe. |
+
+For current BIST 100 members, call `data.market.bist` with `symbol="XIST:XU100"`,
+`dataset="index_components"`, and `limit=100`. This uses borsapy and returns symbols and
+names, not official weights or a membership date. IstFin's index reference data requires a
+separate agreement with Borsa İstanbul and is not available through Qua.
 
 History and quotas depend on the subscription. IstFin is never a price or backtest feed here:
 its historical bars can be unadjusted across bonus issues. borsapy still serves BIST price

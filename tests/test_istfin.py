@@ -123,21 +123,8 @@ class IstfinTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(r.provenance.as_of, "2025-11-04")
 
-    async def test_missing_index_weight_is_not_zero_or_renormalized(self):
-        data = {
-            "code": "XU100",
-            "asOfDay": "2025-11-03",
-            "updatedAt": "2025-11-04T10:10:00Z",
-            "constituents": [{"symbol": "AAA", "weight": 12.5}, {"symbol": "BBB", "weight": None}],
-        }
-        self.transport(lambda _: httpx.Response(200, json={"data": data, "meta": {}}))
-        r = await istfin._index(istfin.IndexRequest(symbol="XIST:XU100"))
-        self.assertEqual(r.provenance.as_of, "2025-11-03")
-        self.assertEqual(
-            [(x.symbol, x.weight_pct) for x in r.output.constituents],
-            [("XIST:AAA", 12.5), ("XIST:BBB", None)],
-        )
-        self.assertIn("12.50%", r.text)
+    def test_istfin_catalog_does_not_offer_retired_index_tool(self):
+        self.assertIsNone(catalog_tool_registry(use_istfin=True).get("data_market_istfin_index"))
 
     async def test_quota_error_does_not_retry_or_echo_server_details(self):
         calls = []

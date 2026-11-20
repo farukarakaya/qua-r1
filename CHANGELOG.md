@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Removed `data.market.istfin_index` after IstFin restricted access to index reference data.
+  `data.market.bist` still lists current index members without weights or a membership date.
+
 ## [0.1.1] - 2026-11-09
 
 - Reports: the PDF is set in Noto Sans, with Noto Sans SC and KR, so it draws Chinese, Japanese

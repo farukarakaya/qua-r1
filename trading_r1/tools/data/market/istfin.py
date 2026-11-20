@@ -13,7 +13,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, model_validator
 
 from trading_r1.contract.spec import Output, Provenance, Result, ToolError, ToolSpec, hint
-from trading_r1.contract.units import Code, Day, Multiple, Percent, Text
+from trading_r1.contract.units import Code, Day, Multiple, Text
 from trading_r1.runtime.sources import cite_source
 from trading_r1.state.credentials import overlay
 from trading_r1.tools.data.bist import bist_ticker
@@ -255,35 +255,6 @@ async def _ratios(req: RatiosRequest) -> Result:
     )
 
 
-class IndexRequest(IstfinRequest):
-    symbol: Symbol = Field(description="Qualified BIST index, e.g. XIST:XU100.")
-
-
-class Constituent(ProviderRow):
-    symbol: str
-    weight_pct: Percent = Field(validation_alias="weight")
-
-
-class IndexOutput(IstfinOutput):
-    model_config = ConfigDict(validate_by_name=True)
-
-    code: str
-    name: Text = None
-    membership_date: Day = Field(validation_alias="asOfDay")
-    constituents: Annotated[list[Constituent], hint(rows=24)]
-
-
-async def _index(req: IndexRequest) -> Result:
-    code = _qualified_code(req.symbol)
-    out, _ = await _get(f"/v1/indexes/{code}", TypeAdapter(IndexOutput))
-    if out.code != code or not out.constituents:
-        raise ToolError(f"IstFin returned no constituents for XIST:{code}.")
-    out.code = f"XIST:{code}"
-    for row in out.constituents:
-        row.symbol = f"XIST:{row.symbol}"
-    return Result(out, Provenance(source=_BIST, subject=out.code, as_of=out.membership_date))
-
-
 ISTFIN_SPECS = (
     ToolSpec(
         name="data_market_istfin_news",
@@ -322,17 +293,5 @@ ISTFIN_SPECS = (
         handler=_ratios,
         output=RatiosOutput,
         tags=("BIST", "fundamentals", "valuation"),
-    ),
-    ToolSpec(
-        name="data_market_istfin_index",
-        display_name="data.market.istfin_index",
-        result_kind="data",
-        tier="deferred",
-        description="Current BIST index constituents and percentage weights from IstFin, with "
-        "the membership date. This is not historical membership or index price history.",
-        request_schema=IndexRequest,
-        handler=_index,
-        output=IndexOutput,
-        tags=("BIST", "index", "weights"),
     ),
 )
