@@ -32,6 +32,7 @@ import { Welcome } from "./components/welcome"
 import {
   type Health,
   type ModelInfo,
+  type SessionPdfs,
   type StatusInfo,
   answerAskUser,
   compact,
@@ -45,6 +46,7 @@ import {
   listModels,
   listSessions,
   newSessionId,
+  setSessionPdfs,
   researchStream,
   saveBackbone,
   savePrefs,
@@ -77,6 +79,7 @@ type View = "welcome" | "research"
 // Reserved by the backend for sessions that can read PDFs and are not synced.
 const DOCUMENT_SESSION_PREFIX = "docs-"
 const ISTFIN_SESSION_PREFIX = "istfin-"
+const PDFS_OFF: SessionPdfs = { pdfs_enabled: false, pdfs_private: false }
 
 function AppInner() {
   const dialog = useDialog()
@@ -85,11 +88,11 @@ function AppInner() {
   const [turns, setTurns] = createSignal<Turn[]>([])
   const [running, setRunning] = createSignal(false)
   const [sessionId, setSessionId] = createSignal<string>()
-  const documentSession = () => sessionId()?.startsWith(DOCUMENT_SESSION_PREFIX) ?? false
+  const [pdfs, setPdfs] = createSignal<SessionPdfs>(PDFS_OFF)
   const [pdfSessionWithIstfin, setPdfSessionWithIstfin] = createSignal<string>()
   const istfinSession = () =>
     sessionId()?.startsWith(ISTFIN_SESSION_PREFIX) ||
-    (documentSession() && sessionId() === pdfSessionWithIstfin())
+    (!!sessionId() && sessionId() === pdfSessionWithIstfin())
   const [syncStatus, setSyncStatus] = createSignal<SyncStatus | null>(null)
   // Launch overrides the CLI passes via env for `trading-r1 --profile/--mode`.
   const launchEnv = typeof process !== "undefined" ? process.env : ({} as Record<string, string | undefined>)
@@ -129,7 +132,7 @@ function AppInner() {
       const status = await getStatus(id, profile)
       if (id !== sessionId() || profile !== activeProfile()) return
       setUsage(status)
-      setPdfSessionWithIstfin(status.istfin && documentSession() ? id : undefined)
+      setPdfSessionWithIstfin(status.istfin ? id : undefined)
     } catch {
       /* meter is best-effort */
     }
@@ -233,6 +236,7 @@ function AppInner() {
     setTurns([])
     inputHistory.load([]) // input recall is per-session: a new session starts empty
     setSessionId(prefix ? `${prefix}${crypto.randomUUID()}` : undefined)
+    setPdfs(prefix === DOCUMENT_SESSION_PREFIX ? { pdfs_enabled: true, pdfs_private: true } : PDFS_OFF)
     setView("welcome")
     void refreshUsage()
   }
@@ -257,6 +261,48 @@ function AppInner() {
         }}
       />
     ))
+  }
+
+  function choosePdfAccess() {
+    if (running()) return
+    const enable = !pdfs().pdfs_enabled
+    dialog.show(() => (
+      <ListDialog
+        title={`PDF access: ${enable ? "off" : "on"}`}
+        note={
+          enable
+            ? "The model can receive selected report content. This session will never sync again. Already synced turns stay in your account."
+            : "Stop new PDF searches and reads. Earlier excerpts stay in the chat. Sync stays off."
+        }
+        options={[
+          { name: "Cancel", description: "Keep the current setting", value: "cancel" },
+          { name: enable ? "Enable PDFs" : "Disable PDFs", description: "", value: "change" },
+        ]}
+        width={layout.width.lg}
+        onCancel={() => dialog.close()}
+        onSelect={(choice) => {
+          dialog.close()
+          if (choice === "change") void changePdfAccess(enable)
+        }}
+      />
+    ))
+  }
+
+  async function changePdfAccess(enabled: boolean) {
+    if (running()) return
+    setRunning(true) // keep turns and session switches from racing the setting change
+    try {
+      const id = sessionId() ?? (await newSessionId())
+      const next = await setSessionPdfs(id, enabled)
+      setSessionId(id)
+      setPdfs(next)
+      notify(next.pdfs_enabled ? "PDFs on. Sync is off for this session." : "PDFs off. Sync stays off.")
+      void refreshUsage()
+    } catch (e) {
+      notify(`Couldn't change PDF access: ${errorText(e)}`)
+    } finally {
+      setRunning(false)
+    }
   }
 
   async function quit() {
@@ -339,6 +385,7 @@ function AppInner() {
         `Model:    ${backbone()?.model ?? st.model}`,
         `Context:  ${st.used_pct}%  (${tokensK(st.tokens_used)} / ${tokensK(st.context_window)})`,
         `Turns:    ${st.turns}`,
+        `PDFs:     ${st.pdfs_enabled ? "on" : "off"}${st.pdfs_private ? " (sync permanently off)" : ""}`,
       ]),
     )
   }
@@ -498,7 +545,7 @@ function AppInner() {
       return info("Resume session", ["No saved sessions yet.", "Ask a question to start one."])
     const options: ListOption[] = sessions.map((s) => ({
       name: `${syncGlyph(s.sync)} ${s.title}`,
-      description: `${s.turns} turn${s.turns === 1 ? "" : "s"}, ${day(s.updated_at)}${s.id.startsWith(DOCUMENT_SESSION_PREFIX) ? ", PDFs on" : ""}`,
+      description: `${s.turns} turn${s.turns === 1 ? "" : "s"}, ${day(s.updated_at)}${s.pdfs_enabled ? ", PDFs on" : ""}`,
       value: s.id,
     }))
     dialog.show(() => (
@@ -508,8 +555,9 @@ function AppInner() {
         onCancel={() => dialog.close()}
         onSelect={(id) => {
           dialog.close()
-          void load("Resume session", getSession(id), (entries) => {
+          void load("Resume session", getSession(id), ({ turns: entries, ...pdfSettings }) => {
             setSessionId(id)
+            setPdfs(pdfSettings)
             setTurns(turnsFromSession(entries))
             // recall THIS session's prompts, the questions as typed
             inputHistory.load(
@@ -544,6 +592,7 @@ function AppInner() {
       {
         newSession: newResearch,
         newDocumentSession: newDocumentResearch,
+        choosePdfAccess,
         resumeSession: chooseSession,
         compactContext: runCompact,
         sessionStatus: showStatus,
@@ -565,6 +614,7 @@ function AppInner() {
         mode: mode(),
         model: model(),
         running: running(),
+        pdfsEnabled: pdfs().pdfs_enabled,
         hasAnswer: !running() && !!lastAnswer(),
         hasSession: !!sessionId() && turns().length > 0,
       },
@@ -769,7 +819,8 @@ function AppInner() {
       <Footer
         version={version()}
         notice={notice()}
-        documents={documentSession()}
+        documents={pdfs().pdfs_enabled}
+        documentsPrivate={pdfs().pdfs_private}
         istfin={istfinSession()}
         context={prefs().side_panel ? undefined : contextMeter(usage())}
       />

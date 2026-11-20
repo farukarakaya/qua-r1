@@ -41,7 +41,12 @@ export interface Health {
   reader: { profile: string | null; model: string | null; ready: boolean }
 }
 
-interface SessionSummary {
+export interface SessionPdfs {
+  pdfs_enabled: boolean
+  pdfs_private: boolean // permanent sync exclusion, even when PDFs are off
+}
+
+interface SessionSummary extends SessionPdfs {
   id: string
   title: string
   created_at: string
@@ -50,7 +55,7 @@ interface SessionSummary {
   sync?: SyncMark // the session's state in the archive
 }
 
-export interface StatusInfo {
+export interface StatusInfo extends Partial<SessionPdfs> {
   model: string
   istfin?: boolean
   context_window: number
@@ -267,7 +272,7 @@ export async function health(profile?: string, opts: ReqOpts = {}): Promise<Heal
   return getJson<Health>(`/health${q}`, opts)
 }
 
-export async function newSessionId(signal: AbortSignal): Promise<string> {
+export async function newSessionId(signal?: AbortSignal): Promise<string> {
   return (await postJson<{ id: string }>("/sessions", undefined, { signal })).id
 }
 
@@ -292,9 +297,12 @@ export type SessionEntry =
   | { type: "compact"; at: string; stats?: Record<string, unknown> }
 
 /** A session's turns, to replay the transcript when resuming or switching to it. */
-export async function getSession(sessionId: string, opts: ReqOpts = {}): Promise<SessionEntry[]> {
-  const r = await getJson<{ turns: SessionEntry[] }>(`/sessions/${encodeURIComponent(sessionId)}`, opts)
-  return r.turns
+export async function getSession(sessionId: string, opts: ReqOpts = {}) {
+  return getJson<SessionPdfs & { turns: SessionEntry[] }>(`/sessions/${encodeURIComponent(sessionId)}`, opts)
+}
+
+export async function setSessionPdfs(sessionId: string, enabled: boolean, opts: ReqOpts = {}) {
+  return putJson<SessionPdfs>(`/sessions/${encodeURIComponent(sessionId)}/pdfs`, { enabled }, opts)
 }
 
 /** Persisted user settings: the sticky backbone (`null` until the user chose one, when the

@@ -134,11 +134,14 @@ class SyncStore:
                 "attempts = 0 WHERE state = 'denied'"
             )
 
-    def summary(self, sizes: dict[str, int], *, enabled: bool = True) -> dict[str, int]:
+    def summary(
+        self, sizes: dict[str, int], *, enabled: bool = True, excluded: set[str] | None = None
+    ) -> dict[str, int]:
         """How many sessions show each state, given the log sizes (a missing log counts as 0)."""
         counts = {"synced": 0, "pending": 0, "full": 0, "error": 0, "off": 0}
         for entry in self.entries():
             if entry.tombstone:
                 continue
-            counts[shown_state(entry, sizes.get(entry.session_id, 0), enabled=enabled)] += 1
+            active = enabled and entry.session_id not in (excluded or ())
+            counts[shown_state(entry, sizes.get(entry.session_id, 0), enabled=active)] += 1
         return counts

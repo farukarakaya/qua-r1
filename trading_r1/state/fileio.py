@@ -16,16 +16,23 @@ from pathlib import Path
 from typing import Any
 
 
-def atomic_write_text(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` atomically: a unique temp file in the same directory (so
-    concurrent writers never share one), then ``os.replace``: readers see the old file or the
-    new one, never half of either. Parents are created; the temp is removed on failure."""
+def atomic_write_text(path: Path, text: str, *, durable: bool = False) -> None:
+    """Replace a text file atomically. With ``durable``, flush both data and the rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+            if durable:
+                fh.flush()
+                os.fsync(fh.fileno())
         os.replace(tmp, path)
+        if durable:
+            dir_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)

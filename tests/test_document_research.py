@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
 import os
 import tempfile
@@ -17,6 +18,7 @@ from trading_r1.runtime.memory import MemoryStore
 from trading_r1.runtime.session.store import SessionStore
 from trading_r1.runtime.tool_registry import ToolRegistry
 from trading_r1.service import state
+from trading_r1.service.app import create_app
 from trading_r1.service.routes.research import ResearchRequest, _run_turn
 from trading_r1.service.syncing import SyncRuntime
 from trading_r1.state import documents
@@ -309,6 +311,136 @@ class DocumentResearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("data_market_istfin_ratios", requests[2]["messages"][0]["content"])
         self.assertIsNone(self.sync.store.get("docs-combined"))
         self.assertIsNotNone(self.sync.store.get("ordinary-existing"))
+
+    async def test_toggle_in_place_persists_and_fences_an_in_progress_upload(self):
+        session_id = "ordinary-existing"
+        requests = []
+        append_started = asyncio.Event()
+        finish_append = asyncio.Event()
+        uploaded = []
+
+        def model(request):
+            payload = json.loads(request.content)
+            requests.append(payload)
+            if len(requests) == 2:
+                return _chat_reply(
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_pdf",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_doc",
+                                    "arguments": json.dumps(
+                                        {"document_id": _DOC_ID, "start_page": 2, "end_page": 2}
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                    "tool_calls",
+                )
+            answers = {
+                1: "Initial answer",
+                3: "Report figure: 125 TL",
+                4: "Follow-up",
+                5: "Re-enabled",
+            }
+            return _chat_reply({"role": "assistant", "content": answers[len(requests)]})
+
+        async def archive(request):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": []})
+            if request.method == "PUT":
+                self.assertFalse(uploaded, "updated metadata after opting out")
+                return httpx.Response(200, json={"size": 0, "metadata": {}})
+            self.assertEqual(request.method, "PATCH")
+            uploaded.append(request.content)
+            append_started.set()
+            await finish_append.wait()
+            size = int(request.headers["Upload-Offset"]) + len(request.content)
+            return httpx.Response(200, json={"size": size, "verified_to": size})
+
+        self.enterContext(patch.dict(os.environ, {"TR1_API_AUTH": "off"}))
+        archive_sync = SyncRuntime(
+            self.sessions.directory,
+            enabled=lambda: True,
+            access=lambda: ("test", "https://archive.example"),
+            transport=httpx.MockTransport(archive),
+            store=self.sync.store,
+        )
+        self.enterContext(patch.object(state, "SYNC", archive_sync))
+        engine = archive_sync.engine()
+        self.addAsyncCleanup(engine.client.close)
+        async with (
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=create_app()), base_url="http://localhost"
+            ) as api,
+            AsyncOpenAI(
+                api_key="test", http_client=httpx.AsyncClient(transport=httpx.MockTransport(model))
+            ) as client,
+        ):
+            path = f"/sessions/{session_id}"
+            turn = ResearchRequest(session_id=session_id, question=_QUESTION)
+            await _run_turn(turn, _PROFILE, client=client)
+            self.assertTrue(self.sync.store.get(session_id))
+            push = asyncio.create_task(archive_sync.push_now())
+            try:
+                await asyncio.wait_for(append_started.wait(), timeout=5)
+                result = await api.put(f"{path}/pdfs", json={"enabled": True})
+                self.assertEqual(result.json(), {"pdfs_enabled": True, "pdfs_private": True})
+                await _run_turn(turn, _PROFILE, client=client)
+                result = await api.put(f"{path}/pdfs", json={"enabled": False})
+                self.assertEqual(result.json(), {"pdfs_enabled": False, "pdfs_private": True})
+            finally:
+                finish_append.set()
+                await push
+
+            # Recreate the session store, as on backend restart, before resuming the same id.
+            with patch.object(state, "SESSIONS", SessionStore(self.sessions.directory)):
+                saved = (await api.get(path)).json()
+                self.assertFalse(saved["pdfs_enabled"])
+                self.assertTrue(saved["pdfs_private"])
+                self.assertEqual(len(saved["turns"]), 2)
+                await _run_turn(turn, _PROFILE, client=client)
+                await api.put(f"{path}/pdfs", json={"enabled": True})
+                await _run_turn(turn, _PROFILE, client=client)
+
+            available = [
+                {t["function"]["name"] for t in r["tools"]} & {"search_docs", "read_doc"}
+                for r in (requests[0], requests[1], requests[3], requests[4])
+            ]
+            both = {"search_docs", "read_doc"}
+            self.assertEqual(available, [set(), both, set(), both])
+            self.assertIn(_PAGE, requests[2]["messages"][-1]["content"])
+            self.assertNotIn("Broker report.pdf", requests[3]["messages"][-1]["content"])
+            self.assertIn("Report figure: 125 TL", json.dumps(requests[3]["messages"]))
+            self.assertEqual(engine.state_of(session_id), "off")
+            self.assertEqual(archive_sync.summary()["counts"]["off"], 1)
+            self.assertFalse(archive_sync.enrol(session_id))
+            self.assertEqual(archive_sync.import_history(), {"enrolled": 0, "already": 0})
+            await archive_sync.run_pass()
+            await archive_sync.push_now()
+            self.assertEqual(len(uploaded), 1)
+
+    async def test_pdf_defaults_validation_and_active_turn(self):
+        self.enterContext(patch.dict(os.environ, {"TR1_API_AUTH": "off"}))
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app()), base_url="http://localhost"
+        ) as api:
+            path = "/sessions/docs-legacy"
+            self.assertTrue((await api.get(path)).json()["pdfs_enabled"])
+            async with state.session_lock("docs-legacy"):
+                response = await api.put(f"{path}/pdfs", json={"enabled": False})
+                self.assertEqual(response.status_code, 409)
+            await api.put(f"{path}/pdfs", json={"enabled": False})
+            self.assertFalse((await api.get(path)).json()["pdfs_enabled"])
+            self.assertTrue((await api.get(path)).json()["pdfs_private"])
+            ordinary = await api.put("/sessions/ordinary/pdfs", json={"enabled": False})
+            self.assertEqual(ordinary.json(), {"pdfs_enabled": False, "pdfs_private": False})
+            invalid = await api.put("/sessions/INVALID/pdfs", json={"enabled": True})
+            self.assertEqual(invalid.status_code, 422)
 
     async def test_sync_skips_document_sessions_even_if_already_enrolled(self):
         self.enterContext(patch.dict(os.environ, {"ISTFIN_API_KEY": "fixture"}))

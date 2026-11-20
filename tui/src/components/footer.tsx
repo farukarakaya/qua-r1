@@ -28,6 +28,7 @@ export function Footer(props: {
   notice?: string
   context?: ContextMeter
   documents?: boolean
+  documentsPrivate?: boolean
   istfin?: boolean
 }) {
   const capabilities = () => [props.documents && "PDFs", props.istfin && "IstFin"].filter(Boolean)
@@ -46,8 +47,10 @@ export function Footer(props: {
         <text fg={theme.accent}>{props.notice}</text>
       </Show>
       <box flexGrow={1} />
-      <Show when={capabilities().length}>
-        <text fg={theme.accent}>{capabilities().join(" + ")} on, sync off</text>
+      <Show when={capabilities().length || props.documentsPrivate}>
+        <text fg={theme.accent}>
+          {capabilities().length ? `${capabilities().join(" + ")} on` : "PDFs off"}, sync off
+        </text>
       </Show>
       <Show when={props.context}>
         <text fg={props.context!.warn ? theme.warning : theme.textMuted}>

@@ -38,7 +38,7 @@ Imports flow downward (`CONTRIBUTING.md`). Preserve these layer boundaries:
 2. `trading_r1/state/` and `trading_r1/providers/`: disk state (`paths.py` defaults to `~/.trading-r1/`, overridden by `TR1_HOME`; `reports_dir.py` uses `TR1_REPORTS_DIR`; `documents.py` reads imported PDF transcripts and builds the bounded catalog), settings, credentials, runtime config, and model protocol adapters (`chat`, `openai-responses`, `gemini`, `anthropic`).
 3. `trading_r1/runtime/`: `Agent` loop, `dispatch.py` (never-raise tool execution), `chaining.py` (`prev:<id>.<path>` resolution), `tool_registry.py`, `skill_registry.py`, `modes.py`, `taxonomy.py`, `prompts.py`, `evidence.py`, compaction/recovery, and `session/`. **`runtime` must not import `tools`.**
 4. `trading_r1/tools/`:
-   - `core/`: `update_plan`, `ask_user`, `evidence`, `load_tool`, `load_skill`, `remember`/`forget`, `read_doc` (in `docs-` sessions).
+   - `core/`: `update_plan`, `ask_user`, `evidence`, `load_tool`, `load_skill`, `remember`/`forget`, `read_doc` (when PDF access is on).
    - `web/`: `search`, `visit`, `compose_citations` bound per run to a `FetchCache`.
    - `data/`: market prices, quotes, news, symbol search, BIST (`borsapy`), IstFin (KAP and valuation ratios), macro series, and upstream Tauric tools.
    - `compute/`: pure-math analytics (`arithmetic`, `valuation`, `modeling`, `risk`, `derivatives`, `fixed_income`, `portfolio`, `statistics`, `technical`). Keep compute tools free of network I/O and data-source coupling.
@@ -50,7 +50,7 @@ Imports flow downward (`CONTRIBUTING.md`). Preserve these layer boundaries:
 
 - **No silent fallback:** When a configured provider cannot serve a request, fail explicitly with `ToolError` rather than falling back to another provider.
 - **BIST routing (`trading_r1/tools/data/bist.py`, `pricing.py`, `market/bist_data.py`):** BIST tickers (`XIST:THYAO` or `THYAO.IS`) route through `borsapy` in `TRY` (split-adjusted daily/weekly/monthly bars; intraday bars are rejected for BIST). `data.market.aligned_prices` joins strictly on shared dates and fails the whole basket if any symbol fails.
-- **PDF OCR and document sessions (`documents.py`, `state/documents.py`, `tools/core/read_doc.py`):** `trading-r1 docs add` uses the dedicated `gpt-ocr` profile (`openai-responses`, `ocr` role) and stores transcripts under `$TR1_HOME/docs/<sha256>.json`. Document sessions (`docs-` prefix) are opt-in and excluded from session sync.
+- **PDF OCR and document sessions (`documents.py`, `state/documents.py`, `tools/core/read_doc.py`):** `trading-r1 docs add` uses the dedicated `gpt-ocr` profile (`openai-responses`, `ocr` role) and stores transcripts under `$TR1_HOME/docs/<sha256>.json`. PDF access is opt-in, defaults to on for `docs-` sessions, and permanently excludes the session from sync once enabled.
 - **IstFin (`tools/data/market/istfin.py`):** Opt-in BIST research for KAP disclosures and valuation ratios when configured.
 
 ## Product decisions

@@ -30,6 +30,7 @@ from trading_r1.service import preferences
 from trading_r1.service.syncing import SyncRuntime
 from trading_r1.state.credentials import overlay
 from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX, catalog_context
+from trading_r1.state.session_documents import pdfs_enabled
 
 _LOG = logging.getLogger(__name__)
 
@@ -99,6 +100,10 @@ def session_uses_istfin(session_id: str | None) -> bool:
     )
 
 
+def session_uses_documents(session_id: str | None) -> bool:
+    return pdfs_enabled(SESSIONS.directory, session_id)
+
+
 def prompt_overhead_of(
     session_id: str | None,
     mode: str | None = None,
@@ -108,8 +113,7 @@ def prompt_overhead_of(
 ) -> int:
     """What the next request of a session carries beside its history."""
     if document_context is None:
-        use_documents = bool(session_id and session_id.startswith(DOCUMENT_SESSION_PREFIX))
-        document_context = catalog_context() if use_documents else ""
+        document_context = catalog_context() if session_uses_documents(session_id) else ""
     if use_istfin is None:
         use_istfin = session_uses_istfin(session_id)
     return prompt_overhead(

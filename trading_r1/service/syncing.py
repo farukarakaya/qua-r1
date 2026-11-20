@@ -26,6 +26,7 @@ import httpx
 from trading_r1.providers import get_profile
 from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX
 from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX
+from trading_r1.state.session_documents import pdf_sync_excluded
 from trading_r1.sync.client import DEFAULT_BASE_URL, ArchiveError
 from trading_r1.sync.engine import SyncEngine
 from trading_r1.sync.store import PENDING_DELETE, SyncStore, shown_state
@@ -126,9 +127,12 @@ class SyncRuntime:
         self.store.close()
 
     # -- enrolment ------------------------------------------------------------------------
+    def _syncable(self, session_id: str) -> bool:
+        return is_synced_kind(session_id) and not pdf_sync_excluded(self.dir, session_id)
+
     def enrol(self, session_id: str) -> bool:
         """Start syncing a session, if sync is on and it is one the user works in."""
-        if not is_synced_kind(session_id) or not self.on():
+        if not self._syncable(session_id) or not self.on():
             return False
         return self.store.enrol(session_id, time.time())
 
@@ -137,7 +141,7 @@ class SyncRuntime:
         enrolled = known = 0
         for path in sorted(self.dir.glob("*.jsonl")) if self.dir.is_dir() else []:
             sid = path.stem
-            if not is_synced_kind(sid) or path.is_symlink():
+            if not self._syncable(sid) or path.is_symlink():
                 continue
             if self.store.get(sid) is not None:
                 known += 1
@@ -160,7 +164,9 @@ class SyncRuntime:
         active = self._active()
         entries = {e.session_id: e for e in self.store.entries()}
         return {
-            sid: shown_state(entries.get(sid), self._size(sid), enabled=active)
+            sid: shown_state(
+                entries.get(sid), self._size(sid), enabled=active and self._syncable(sid)
+            )
             for sid in session_ids
         }
 
@@ -169,7 +175,8 @@ class SyncRuntime:
         on, has_key = self.on(), self._access() is not None
         entries = self.store.entries()
         sizes = {e.session_id: self._size(e.session_id) for e in entries}
-        counts = self.store.summary(sizes, enabled=on and has_key)
+        excluded = {sid for sid in sizes if not self._syncable(sid)}
+        counts = self.store.summary(sizes, enabled=on and has_key, excluded=excluded)
         if not on:
             state = "off"
         elif not has_key:
@@ -182,7 +189,14 @@ class SyncRuntime:
                 (
                     e.error
                     for e in entries
-                    if e.error and (e.tombstone or shown_state(e, sizes[e.session_id]) != "synced")
+                    if e.error
+                    and (
+                        e.tombstone
+                        or (
+                            e.session_id not in excluded
+                            and shown_state(e, sizes[e.session_id]) != "synced"
+                        )
+                    )
                 ),
                 "",
             )
