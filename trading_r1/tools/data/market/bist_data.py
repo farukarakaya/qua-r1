@@ -40,7 +40,9 @@ _NOTES = {
     "capital_changes": "Native paid rights and bonus capital percentages, not split multipliers.",
     "corporate_actions": (
         "Latest dividends and capital changes by action date. Dividend amounts are in TRY per "
-        "share and not adjusted here for later splits. BIST price returns exclude cash dividends."
+        "share and not adjusted here for later splits. BIST price returns exclude cash dividends. "
+        "Verify with KAP for dates, approvals, installments and payment status. "
+        "Unresolved amounts and dates are unknown, not zero."
     ),
     "filing_calendar": "Expected KAP filing windows, not confirmed earnings dates.",
     "disclosure": "Text from the KAP disclosure page; attachments are not included.",
@@ -112,7 +114,7 @@ def _rows(data: Any, limit: int | None = None) -> list[dict[str, Any]]:
     return json.loads(data.to_json(orient="records", date_format="iso"))
 
 
-def _parse_actions(body: Any, ticker: str) -> list[dict[str, Any]]:
+def _parse_actions(body: Any, ticker: str) -> tuple[list[dict[str, Any]], list[str]]:
     error = f"{_IS} returned invalid corporate actions for XIST:{ticker}."
     records = body.get("d") if isinstance(body, dict) else None
     try:
@@ -137,6 +139,7 @@ def _parse_actions(body: Any, ticker: str) -> list[dict[str, Any]]:
 
     zone = bist.istanbul()
     events = []
+    issues = set()
     for row in records:
         code = row.get("SHT_KODU") if isinstance(row, dict) else None
         if not isinstance(code, str) or not re.fullmatch(r"[0-9]{2}", code):
@@ -144,6 +147,9 @@ def _parse_actions(body: Any, ticker: str) -> list[dict[str, Any]]:
         if code not in {"01", "02", "03", "04", "09"}:
             continue  # administrative record, not a cash payout or capital increase
         try:
+            if row.get("SHHE_TARIH") in (-62135596800000, "-62135596800000"):
+                issues.add(f"Type {code}: action date unknown; excluded from dated results.")
+                continue
             stamp = number(row, "SHHE_TARIH")
             if not stamp:
                 raise ValueError
@@ -154,6 +160,13 @@ def _parse_actions(body: Any, ticker: str) -> list[dict[str, Any]]:
             )
             if code == "04":
                 gross = number(row, "SHHE_NAKIT_TM_ORAN")
+                if gross == 0 and (
+                    number(row, "SHHE_BDSZ_IK_ORAN") or number(row, "SHHE_BDSZ_TM_ORAN")
+                ):
+                    issues.add(
+                        "Conflicting type 04 cash and bonus fields; event and payout unknown."
+                    )
+                    continue
                 if not gross:
                     raise ValueError
                 event = {
@@ -171,9 +184,19 @@ def _parse_actions(body: Any, ticker: str) -> list[dict[str, Any]]:
                     code in {"02", "03", "09"} and not (bonus_capital or bonus_dividend)
                 ):
                     raise ValueError
+                capital = row.get("HSP_BOLUNME_SONRASI_SERMAYE")
+                if (
+                    capital not in (None, "")
+                    and math.isfinite(float(capital))
+                    and float(capital) < 0
+                ):
+                    issues.add("Negative provider capital; post-action capital amount unknown.")
+                    capital = None
+                else:
+                    capital = number(row, "HSP_BOLUNME_SONRASI_SERMAYE")
                 event = {
                     "action": "capital_change",
-                    "Capital": number(row, "HSP_BOLUNME_SONRASI_SERMAYE"),
+                    "Capital": capital,
                     "RightsIssue": rounded(rights),
                     "BonusFromCapital": rounded(bonus_capital),
                     "BonusFromDividend": rounded(bonus_dividend),
@@ -181,7 +204,16 @@ def _parse_actions(body: Any, ticker: str) -> list[dict[str, Any]]:
             events.append({"Date": date, **event})
         except (ValueError, TypeError, OverflowError, OSError):
             raise ToolError(f"{error} Could not parse event type {code}.") from None
-    return sorted(events, key=lambda row: (row["Date"], row["action"]), reverse=True)
+    return sorted(events, key=lambda row: (row["Date"], row["action"]), reverse=True), sorted(
+        issues
+    )
+
+
+def _fetch_actions(ticker: str) -> tuple[list[dict[str, Any]], list[str]]:
+    from borsapy._providers.isyatirim import get_isyatirim_provider
+
+    # Use the combined endpoint directly; the property getters can turn outages into empty lists.
+    return _parse_actions(get_isyatirim_provider()._fetch_sermaye_data(ticker), ticker)
 
 
 def _fetch(bp: Any, req: BistDataRequest, ticker: str | None) -> tuple[list[dict[str, Any]], str]:
@@ -230,13 +262,6 @@ def _fetch(bp: Any, req: BistDataRequest, ticker: str | None) -> tuple[list[dict
                 "truncated": len(text) > 12000,
             }
         ], _KAP
-    if dataset == "corporate_actions":
-        from borsapy._providers.isyatirim import get_isyatirim_provider
-
-        # Both action types come from the same endpoint. The public property getters fetch
-        # it separately and can turn an outage into an apparently empty action list.
-        body = get_isyatirim_provider()._fetch_sermaye_data(ticker)
-        return _parse_actions(body, ticker)[: req.limit], _IS
     stock = bp.Ticker(ticker)
     if dataset in _STATEMENTS:
         method = getattr(stock, _STATEMENTS[dataset])
@@ -279,10 +304,14 @@ async def _handler(req: BistDataRequest) -> Result:
     subject = f"XIST:{ticker}" if ticker else "BIST"
     if dataset == "disclosure":
         subject = f"KAP {req.disclosure_id}"
-    rows, source = await bist.run(subject, dataset, lambda bp: _fetch(bp, req, ticker))
-    if not rows:
-        raise ToolError(f"No {dataset} available from {source} for {subject}.")
     notes = []
+    if dataset == "corporate_actions":
+        rows, notes = await bist.run(subject, dataset, lambda _: _fetch_actions(ticker))
+        rows, source = rows[: req.limit], _IS
+    else:
+        rows, source = await bist.run(subject, dataset, lambda bp: _fetch(bp, req, ticker))
+    if not rows and not notes:
+        raise ToolError(f"No {dataset} available from {source} for {subject}.")
     if dataset in _STATEMENTS:
         notes.append("Native İş Yatırım line items and reporting periods; not normalized SEC data.")
     if note := _NOTES.get(dataset):
