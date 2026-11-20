@@ -9,6 +9,7 @@ from trading_r1.tools.compute.portfolio import (
     optimization,
     performance,
     rebalance,
+    review,
 )
 
 PORTFOLIO_SPECS = [
@@ -17,6 +18,7 @@ PORTFOLIO_SPECS = [
     decomposition.SPEC,
     optimization.SPEC,
     rebalance.SPEC,
+    review.SPEC,
 ]
 
 __all__ = [
@@ -26,4 +28,5 @@ __all__ = [
     "optimization",
     "performance",
     "rebalance",
+    "review",
 ]

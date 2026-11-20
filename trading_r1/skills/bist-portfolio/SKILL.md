@@ -17,6 +17,7 @@ requires_tools:
   - compute_portfolio_decomposition
   - compute_portfolio_performance
   - compute_portfolio_optimization
+  - compute_portfolio_review
 ---
 
 # BIST portfolio construction
@@ -24,7 +25,13 @@ requires_tools:
 1. **Scope the mandate.** Establish USD vs TRY objective, the BIST sleeve's share of total
    wealth, horizon, tolerable drawdown, and dividend vs growth preference. Ask about inputs
    that would change the sizing; otherwise state assumptions. Report USD portfolio risk even
-   if the investor also tracks TRY.
+   if the investor also tracks TRY. For existing holdings, load `portfolio-review` for its
+   sale gate and cash ledger. Ask whether a dividend preference authorizes sales of intact
+   businesses only when it changes the recommendation. Without permission, require the original
+   thesis and a contrary primary filing for any actionable sale. A payout cut alone is not a
+   thesis break. Missing holding-company NAV or payout evidence calls for review, not a sale.
+   Compare hold, a funded first stage and a conditional full target at the same quote and FX
+   dates. Show the cash and costs for each; future dividends can fund buys only after receipt.
 2. **Frame the macro regime and sector rotation (2 to 3 calls).**
    - Call `data_macro_turkey` for TÜİK CPI, CBRT weighted funding cost (not the policy rate),
      REER and FX reserve trends, TRY deposit and loan rates, and Turkish USD sovereign ask yields.
@@ -123,10 +130,12 @@ requires_tools:
      and basis; do not rank their raw ROE or P/E together without explaining the gap.
    - **Dividends:** Call `data_market_bist` with `dataset="corporate_actions"` for high-yield
      candidates. Check payout coverage, ex-dates, capital changes and recurring vs special
-     payments, and report recent dividend yield or payout context alongside price-only returns.
-     borsapy closes are split-adjusted but exclude cash dividends; label stock and benchmark
-     comparisons as price returns, not total returns. Do not add today's yield to a historical
-     return series.
+     payments. For both mixes separate paid, approved future and proposed dividends from
+     estimated recurring cash. Cite material payers' cash coverage or regulatory capital and
+     show base and downside gross and illustrative net USD income at common FX assumptions.
+     Mark incomplete ranges unknown, not zero. borsapy closes are split-adjusted but exclude
+     cash dividends. Use USD total return only with compatible cash events, share adjustments,
+     FX and benchmark; otherwise use price returns. Never add today's yield to historical returns.
    - **FX and investor costs:** Report material net FX positions and hard-currency revenue
      share from local PDFs, `data_market_bist`, or primary IstFin KAP disclosures when
      available (preferring the latest reported quarter already opened, and flagging large net

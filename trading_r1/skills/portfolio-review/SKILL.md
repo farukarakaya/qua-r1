@@ -8,6 +8,7 @@ requires_tools:
   - compute_portfolio_performance
   - compute_risk_var
   - compute_statistics_regression
+  - compute_portfolio_review
 ---
 
 # Portfolio review
@@ -38,6 +39,29 @@ track record is long enough to mean anything.
    estimated alpha, but do not claim outperformance or skill unless its t is significant.
 6. **Synthesize.** Judge on the mandate's measure, state the significance, and flag the
    tail/skew and the benchmark-relative read.
+
+## Reviewing existing holdings
+
+- **Gate sales first.** Ask whether the new dividend preference authorizes selling intact
+  businesses only if that answer changes the recommendation; otherwise present both paths. Under
+  hold-unless-broken, a thesis break requires citing the original thesis and a contrary filing.
+  A reduced dividend alone is not a break. Missing thesis, NAV, or payout evidence is a review
+  question, not evidence for a zero target. Flag other proposed sales as mandate changes.
+- **Compare hold, funded first stage, and full target** at the same quote and FX dates.
+  Use `compute_portfolio_review` with marked values and explicit trades in the same currency.
+  Label any full target requiring unauthorized sales as conditional; never treat a blocked or
+  unfunded stage as actionable. Use only cash available now and confirmed external cash; model
+  reinvestment of future dividends separately, after receipt. Show opening cash, external cash,
+  buys, sells, closing cash, fees and spreads. One-way turnover is half gross traded value over
+  opening NAV. Do not count external cash as investment performance.
+- **Compare income on the same basis.** Separate historical paid cash, approved future
+  entitlements, proposals and estimated recurring cash. For material payers cite cash flow
+  after necessary capex, cash available at the holding company, or regulatory capital as
+  appropriate. Give base and downside assumptions for both mixes or mark them unknown where
+  evidence is incomplete. Compare gross and illustrative after-withholding USD at the same
+  FX assumptions, including a payout and FX stress. Do not convert unknown payouts to zero.
+  Use a USD total-return comparison only if cash events, share adjustments, FX and benchmark
+  match; otherwise label it price-only. Do not present a hindsight test as account performance.
 
 ## Principles
 
