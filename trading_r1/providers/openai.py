@@ -107,6 +107,7 @@ def _turn_from_response(profile: ModelProfile, resp: Any) -> AssistantTurn:
         # no output at all (e.g. a refusal/blocked response): signal failure so the
         # loop's recovery treats it like the chat provider's empty-choices case.
         finish = "error"
+        text = ""  # Partial text from a failed response is not an actionable answer.
     else:
         finish = "stop"
     native = [

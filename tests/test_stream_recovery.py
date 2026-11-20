@@ -5,6 +5,7 @@ import json
 import unittest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 from openai import APIError, AuthenticationError
@@ -70,6 +71,27 @@ class StreamRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(turn.finish_reason, "length")
         self.assertEqual(turn.tool_calls, [])
         self.assertFalse(turn.is_actionable)
+
+    async def test_terminal_incomplete_text_never_becomes_final_answer(self):
+        partial = SimpleNamespace(
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="content_filter"),
+            output=[],
+            output_text="Partial and unverified.",
+            usage=None,
+        )
+        complete = SimpleNamespace(status="completed", output=[], output_text="Final.", usage=None)
+        create = AsyncMock(side_effect=[partial, complete])
+        agent = Agent(
+            profile=_PROFILE,
+            registry=catalog_tool_registry(),
+            stream_tokens=False,
+            client=SimpleNamespace(responses=SimpleNamespace(create=create)),
+        )
+        events = []
+        await agent.run("Report", on_event=lambda k, d: events.append((k, d)))
+        self.assertEqual([d["content"] for k, d in events if k == "last_message"], ["Final."])
+        self.assertEqual(create.await_count, 2)
 
     async def run_fixture(self, failures):
         tool = SimpleNamespace(
