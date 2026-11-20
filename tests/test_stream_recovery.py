@@ -37,6 +37,9 @@ class Stream:
         if self.error:
             yield SimpleNamespace(type="response.function_call_arguments.delta", delta='{"ex')
             yield SimpleNamespace(type="response.output_text.delta", delta="discard this")
+        elif not self.output:
+            yield SimpleNamespace(type="response.output_text.delta", delta="The answer ")
+            yield SimpleNamespace(type="response.output_text.delta", delta="is four.")
 
     async def get_final_response(self):
         if self.error:
@@ -138,12 +141,13 @@ class StreamRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sum(x.get("type") == "function_call_output" for x in request), 1)
         self.assertEqual(sum(k == "tool_call" for k, _ in events), 1)
         self.assertFalse(any(k == "ask_user" for k, _ in events))
-        self.assertNotIn("discard this", str(events))
+        self.assertNotIn("discard this", json.dumps(result["messages"]))
         return result, events, len(requests)
 
     async def test_disconnect_after_tool_retries_without_replaying_tool(self):
         _, events, count = await self.run_fixture(failures=1)
         self.assertEqual(count, 3)
+        self.assertIn("The answer ", [d["text"] for k, d in events if k == "token"])
         self.assertEqual(
             [d["content"] for k, d in events if k == "last_message"], ["The answer is four."]
         )
