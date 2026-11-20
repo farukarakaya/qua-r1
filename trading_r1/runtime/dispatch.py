@@ -18,7 +18,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from trading_r1.contract.args import ArgsValidationError
 from trading_r1.contract.render import render
@@ -99,7 +99,9 @@ class DispatchResult:
         evidence_id: str | None = None,
         pointer: str | None = None,
         result_kind: str | None = None,
+        validated_args: BaseModel | None = None,
     ) -> None:
+        self.validated_args = validated_args  # Handler input, not serialized into messages or logs.
         self.name = name
         self.result_kind = result_kind
         self.args = args
@@ -309,6 +311,7 @@ async def _dispatch(
             name=name,
             args=args,
             ok=True,
+            validated_args=validated,
             # a control's text stands alone; a fact opens with where it comes from
             text=(
                 text

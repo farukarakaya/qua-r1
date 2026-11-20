@@ -73,9 +73,19 @@ class DecisionCheckpoint(BaseModel):
         )
         tool_rounds = [i for i, m in enumerate(history) if m.get("tool_calls")]
         cutoff = tool_rounds[-1] if tool_rounds else 0
-        projected = [{**system, "content": system["content"] + note}]
+        # Carry working notes as data, never as system or user instructions. Keep the
+        # provider's native assistant tool calls paired with their original results.
+        last_result = next(
+            (i for i in reversed(range(len(history))) if history[i].get("role") == "tool"), None
+        )
+        projected = [system]
         for i, message in enumerate(history):
             if i < cutoff and message.get("_pointer"):
                 message = {**message, "content": message["_pointer"]}
+            if i == last_result:
+                message = {**message, "content": message["content"] + note}
             projected.append(message)
+        if last_result is None and len(history) > 1 and history[-1].get("role") == "user":
+            # Reopened after an interruption/compaction: no tool pair to attach to.
+            projected.insert(-1, {"role": "assistant", "content": note.lstrip()})
         return projected
