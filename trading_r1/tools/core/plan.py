@@ -16,6 +16,7 @@ from trading_r1.contract import events
 from trading_r1.contract.events import PlanStatus
 from trading_r1.contract.spec import Output, Result, ToolSpec
 from trading_r1.contract.units import Count
+from trading_r1.runtime.checkpoint import DecisionNotes
 from trading_r1.runtime.tool_events import emit_tool_event
 
 
@@ -37,6 +38,13 @@ class UpdatePlanRequest(BaseModel):
         '[{"step": "Pull NVDA fundamentals", "status": "completed"}, '
         '{"step": "Run a DCF", "status": "in_progress"}, '
         '{"step": "Write the report", "status": "pending"}].',
+    )
+
+    decision: DecisionNotes | None = Field(
+        None,
+        description="Compact portfolio decision notes. Supply at the start of a portfolio "
+        "review and update when facts or decisions change. Keep material claims tied to "
+        "evidence IDs and citation numbers, retaining unknowns and as-of dates.",
     )
 
 
@@ -61,7 +69,8 @@ _DESCRIPTION = (
     "Maintain a short plan for a multi-step task (3+ steps): call this with the full "
     "ordered list of steps, each marked pending / in_progress / completed. Keep exactly "
     "one step in_progress, and update as you finish steps. In the terminal the user sees "
-    "it as a checklist. Skip it for trivial one- or two-step questions."
+    "it as a checklist. Skip it for trivial one- or two-step questions. For portfolio reviews, "
+    "maintain the decision notes in `decision` alongside the checklist."
 )
 
 SPEC = ToolSpec(
