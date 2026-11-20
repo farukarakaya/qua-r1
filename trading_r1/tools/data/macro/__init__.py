@@ -1,10 +1,10 @@
 # Copyright 2026 Tauric Research
 # SPDX-License-Identifier: Apache-2.0
 
-"""Macro data tools (Tauric): reference series and the category snapshot."""
+"""Macro data tools: Tauric reference series and snapshots, and Turkish indicators."""
 
-from trading_r1.tools.data.macro import series, snapshot
+from trading_r1.tools.data.macro import series, snapshot, turkey
 
-MACRO_DATA_SPECS = [series.SPEC, snapshot.SPEC]
+MACRO_DATA_SPECS = [series.SPEC, snapshot.SPEC, turkey.SPEC]
 
-__all__ = ["MACRO_DATA_SPECS", "series", "snapshot"]
+__all__ = ["MACRO_DATA_SPECS", "series", "snapshot", "turkey"]

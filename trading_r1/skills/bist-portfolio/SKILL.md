@@ -1,9 +1,13 @@
 ---
 name: bist-portfolio
-description: "Construct and size a Turkish equity portfolio. Screen the full BIST, verify fundamentals and dividends, then compare USD drawdowns, correlations and risk budgets against BIST 100."
+description: "Construct and size a Turkish equity portfolio. Assess macro regimes and sector rotation, screen the full BIST, verify fundamentals, and compare USD risk against BIST 100."
 domain: portfolio
 tags: [bist, turkey, portfolio, fx, usd, screening]
 requires_tools:
+  - data_macro_turkey
+  - data_market_bist_sectors
+  - data_market_rates
+  - data_market_sectors
   - data_market_bist_screen
   - data_market_bist
   - data_market_aligned_prices
@@ -21,7 +25,29 @@ requires_tools:
    wealth, horizon, tolerable drawdown, and dividend vs growth preference. Ask about inputs
    that would change the sizing; otherwise state assumptions. Report USD portfolio risk even
    if the investor also tracks TRY.
-2. **Screen before selecting.** Run `data_market_bist_screen` with no index restriction first
+2. **Frame the macro regime and sector rotation (2 to 3 calls).**
+   - Call `data_macro_turkey` for TÜİK CPI, CBRT weighted funding cost (not the policy rate),
+     REER and FX reserve trends, TRY deposit and loan rates, and Turkish USD sovereign ask yields.
+     Call `data_market_rates` for the matched-tenor US Treasury hurdle if not already available.
+     If EVDS is unavailable, state which inputs are missing and keep the regime call conditional.
+   - Call `data_market_bist_sectors` (start with `period="1y"`) for USD and TRY leadership,
+     excess USD return, USD drawdown, and FX beta. Betas above 0.7 suggest stronger historical
+     pass-through from lira depreciation; below 0.3 suggests weaker pass-through. Neither proves
+     FX hedging or a stock's exposure. Use a 3-year check if window sensitivity matters. Add
+     `data_market_sectors` for US sector leadership, or `data_market_prices` for `CL=F` and
+     `EURUSD=X`, only when they could change energy, aviation, or euro-exporter sizing.
+   - Before screening, compare both regimes against the readings. **Orthodox disinflation with a
+     rising REER and costly credit** can squeeze TRY-cost exporters (XTEKS, autos, appliances)
+     and leveraged domestics. Test cash-rich tech (XUTEK), float-earning insurers (XSGRT), pricing
+     power in retail (XTCRT) or telecom (XILTM), and banks (XBANK) once NPLs peak. **An inflation
+     or FX shock with falling REER and reserve pressure** can hurt banks and net-short-FX domestics.
+     Test hard-currency or offshore earners (e.g. ENKAI, CCOLA, or refiners in XKMYA) and exporters
+     with FX revenues and predominantly TRY costs. Check margins, FX debt, and pricing power
+     before applying these hypotheses.
+   - Compare expected annualized USD equity returns at current valuations with the closest
+     Turkish USD Eurobond yield and US Treasury yield. Check the real TRY deposit rate separately
+     as a local ex-post hurdle, not as a USD return. Explain what would change the sector weights.
+3. **Screen before selecting.** Run `data_market_bist_screen` with no index restriction first
    so small- and mid-caps compete with BIST 30 names. Size the 3-month USD liquidity floor to
    the mandate (roughly 10x to 20x one position's USD size, e.g. $0.15m to $0.25m/day for a
    $100k sleeve; do not impose an arbitrary $1m/day floor that drops smaller compounders). Set a
@@ -37,19 +63,23 @@ requires_tools:
      satellite** rather than defaulting to an all-mega-cap list. Do not reject strong post-2021
      IPOs solely to keep a 5-year aligned window; note any shorter sub-window separately. Show
      the cutoffs, coverage, and which screened small/mid-caps were evaluated and kept or passed.
-3. **Verify the shortlist (keep research lean).** If `search_docs` is available, search for
-   candidates and metrics, then `read_doc` and cite the relevant pages. Verify dates and
+   - Explain sector overweights and avoids using both the macro/rotation evidence and verified
+     company fundamentals. Do not exclude a sector just because it lagged historically.
+4. **Verify the shortlist (keep research lean).** Narrow the shortlist before pulling filings.
+   If `search_docs` is available, search for candidates and metrics, then `read_doc` and cite the
+   relevant pages. Verify dates and
    primary figures with `data_market_bist` financial statements (`income_statement` and
    `balance_sheet` only for banks under `financial_group="UFRS"`, since İş Yatırım does not
    provide `cash_flow` for banks) and available IstFin KAP disclosures and ratios. Use
    `data_market_quotes` for fresh price and FX context, not for backtests. Once local PDFs and
    primary BIST/IstFin filings cover a stock's latest quarter, stop there: do not run redundant
    third-party aggregator visits (`StockAnalysis`, `Quartr`) or `visit` raw
-   `kap.org.tr/tr/api/file/download/...` PDFs. Keep web research tight (typically 2 to 4
-   `search` calls and 2 to 4 `visit` calls total for macro policy, tax rules, or genuine gaps),
-   using 3 to 6 plain keywords per query without `site:` operators; add dates only when needed.
-   Distinguish reported numbers from forecasts and targets.
-4. **Compute USD risk before sizing.** Use `data_market_aligned_prices` for all candidates,
+   `kap.org.tr/tr/api/file/download/...` PDFs. Reserve web research for tax rules, unusual news
+   or genuine gaps (usually no more than 4 `search` and 4 `visit` calls). Do not use web search to
+   duplicate CBRT/TÜİK data from `data_macro_turkey`. Use 3 to 6
+   plain keywords per query without `site:` operators; add dates only when needed. Distinguish
+   reported numbers from forecasts and targets.
+5. **Compute USD risk before sizing.** Use `data_market_aligned_prices` for all candidates,
    `USDTRY=X` and `XIST:XU100` in one request (3 to 5 years of daily bars preferred; use weekly
    only on genuinely shared closes). Check the actual dates, bars dropped and price bases.
    Recent listings may shorten the common window; say so and rerun the whole basket when it
@@ -87,7 +117,7 @@ requires_tools:
      multi-year backtests: these are fixed-weight historical estimates, not forecasts. If
      alignment or USD math fails, state the gap and do not present untested weights as
      quantitatively sized.
-5. **Check Turkey-specific adjustments before publishing.**
+6. **Check Turkey-specific adjustments before publishing.**
    - **TMS 29 vs BRSA:** Separate nominal BRSA bank statements (`financial_group="UFRS"`)
      from industrial/retail statements that apply TMS 29. Check the actual reporting period
      and basis; do not rank their raw ROE or P/E together without explaining the gap.
@@ -108,6 +138,8 @@ requires_tools:
      filing requirements and treaty treatment. State any assumed FX conversion spread and
      commissions separately. Don't present gross estimates as after-tax.
 
-Close with the measured USD portfolio and benchmark window, a portfolio table showing reference
-TRY quotes, the USD/TRY rate, target weights, USD sizes (use `calc`) and risk shares, key USD
-correlations, concentration and downside tradeoffs, and evidence that would change sizing.
+In the final report, show which sectors you over- or underweight and why, citing the REER trend,
+sector FX betas, and the Turkish USD Eurobond hurdle used in that decision. Flag any unavailable
+inputs. Close with the measured USD portfolio and benchmark window, a portfolio table showing
+reference TRY quotes, the USD/TRY rate, target weights, USD sizes (use `calc`) and risk shares,
+key USD correlations, concentration and downside tradeoffs, and evidence that would change sizing.

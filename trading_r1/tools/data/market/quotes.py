@@ -138,7 +138,7 @@ def _error_map(body: Any) -> dict[str, str]:
 
 
 def _bist_quote(bp: Any, ticker: str) -> Quote | None:
-    is_index = ticker in bp.indices()
+    is_index = ticker in bist.index_symbols(bp)
     info = (bp.Index(ticker) if is_index else bp.Ticker(ticker)).info
     # Read only fields in TradingView's basic quote dict (including prev_close and timestamp).
     last = info.get("last")

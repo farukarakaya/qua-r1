@@ -9,6 +9,7 @@ from trading_r1.tools.data.market import (
     aligned_prices,
     bist_data,
     bist_screen,
+    bist_sectors,
     digest,
     movers,
     news,
@@ -35,6 +36,7 @@ MARKET_DATA_SPECS = [
     news.SPEC,
     bist_data.SPEC,
     bist_screen.SPEC,
+    bist_sectors.SPEC,
 ]
 
 __all__ = [
@@ -42,6 +44,7 @@ __all__ = [
     "aligned_prices",
     "bist_data",
     "bist_screen",
+    "bist_sectors",
     "digest",
     "movers",
     "news",

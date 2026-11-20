@@ -130,7 +130,7 @@ def _bist_matches(bp: Any, query: str, req: SymbolSearchRequest) -> tuple[list[M
         if stocks or req.asset_type == "equity":
             return stocks, "KAP (via borsapy)"
     rows = bp.search(query, type="index", exchange="BIST", limit=req.limit, full_info=True)
-    supported = set(bp.indices())  # Use the same index list as prices and quotes.
+    supported = bist.index_symbols(bp)
     indices = (
         row for row in rows if row.get("exchange") == "BIST" and row.get("symbol") in supported
     )

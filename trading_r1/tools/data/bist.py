@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from trading_r1.contract.spec import ToolError
+from trading_r1.state import credentials
+from trading_r1.tools.data.common import months_back
 from trading_r1.tools.data.symbols import canonical
 
 SOURCE = "borsapy (TradingView BIST)"
@@ -27,6 +29,7 @@ MAX_LOOKBACK_DAYS = 5000
 _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="bist")
 _SCREEN_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="bist-screen")
 _SCREEN_SESSION_LOCK = Lock()
+_EVDS_LOCK = Lock()
 _TRY_FX = re.compile(r"^([A-Z]{3})[-/_]?TRY$")
 
 SCREEN_SOURCE = "İş Yatırım stock screener via borsapy"
@@ -45,6 +48,8 @@ _SCREEN_CRITERIA = {
     "roe": "422",
 }
 _INDEX_ALIASES = {"BIST30": "XU030", "BIST50": "XU050", "BIST100": "XU100"}
+# Valid indices missing from borsapy's static list.
+_EXTRA_INDICES = {"XTCRT"}
 
 
 def try_fx_base(symbol: str) -> str | None:
@@ -91,6 +96,52 @@ async def run[T](subject: str, dataset: str, fetch: Callable[[Any], T]) -> T:
             raise ToolError(f"borsapy could not fetch {dataset} for {subject}.") from None
 
     return await asyncio.get_running_loop().run_in_executor(_POOL, call)
+
+
+async def fetch_turkey_macro(
+    period: str,
+    evds_codes: list[str],
+    *,
+    require_evds: bool,
+    as_of: dt.date,
+) -> tuple[Any, Any, Any | None]:
+    """Fetch CPI, USD Eurobond quotes and, if configured, one EVDS batch."""
+    key = (credentials.overlay().get("EVDS_API_KEY") or "").strip()
+    if require_evds and not key:
+        raise ToolError("EVDS_API_KEY is required to query custom EVDS series.")
+    months = 6 if period == "6mo" else int(period[:-1]) * 12
+
+    def download(bp: Any) -> Any:
+        # borsapy's key and provider are process globals. Scope both to the batch without
+        # changing the environment, even if another turn is running or the caller cancels.
+        with _EVDS_LOCK:
+            try:
+                bp.set_evds_key(key)
+                frame = bp.evds_download(
+                    evds_codes,
+                    start=months_back(as_of.replace(day=1), max(months - 1, 15)),
+                    end=as_of,
+                    frequency="monthly",
+                    aggregation="last",
+                )
+                if frame is None:
+                    raise ValueError("Empty EVDS response")
+                return frame
+            except Exception:
+                raise ToolError(
+                    "CBRT EVDS batch failed. Check EVDS_API_KEY and the requested series codes."
+                ) from None
+            finally:
+                bp.clear_evds_key()
+
+    tasks = [
+        run("Turkey", "TÜİK CPI", lambda bp: bp.Inflation().tufe(limit=months)),
+        run("Turkey", "USD sovereign Eurobonds", lambda bp: bp.eurobonds(currency="USD")),
+    ]
+    if key:
+        tasks.append(run("Turkey", "CBRT EVDS batch", download))
+    cpi, bonds, *evds = await asyncio.gather(*tasks)
+    return cpi, bonds, evds[0] if evds else None
 
 
 def _screen_sector(provider: Any, sector: str) -> tuple[str, str]:
@@ -245,10 +296,14 @@ async def screen_stocks(
     )
 
 
+def index_symbols(bp: Any) -> set[str]:
+    return _EXTRA_INDICES.union(bp.indices())
+
+
 def _history(
     bp: Any, ticker: str, first: dt.date, last: dt.date
 ) -> tuple[list[dict[str, Any]], bool]:
-    is_index = ticker in bp.indices()
+    is_index = ticker in index_symbols(bp)
     kwargs = {} if is_index else {"adjust": True, "actions": False, "auto_adjust": False}
     instrument = bp.Index(ticker) if is_index else bp.Ticker(ticker)
     frame = instrument.history(

@@ -147,8 +147,19 @@ Market cap and 3-month average volume are in USD millions. Net margin and net in
 are forecasts, so verify them before relying on them. A failed filter or sort metric fails the
 screen. Failed display-only requests are listed under `unavailable_metrics`.
 
-For Turkish stock portfolios, the `bist-portfolio` skill uses a full-universe screen and compares
-USD portfolio risk against BIST 100. Use daily bars for cross-market baskets. If any symbol fails,
+Use `data.macro.turkey` for TÜİK CPI, CBRT funding cost (not the policy rate), CPI-based REER
+(2025=100), gross FX reserves excluding gold, TRY deposit and loan rates, and indicative Turkish
+USD sovereign Eurobond ask yields. Set the CBRT key with `trading-r1 secrets set EVDS_API_KEY`,
+or set `EVDS_API_KEY` in the backend environment (for example, in a `.env` file loaded by your
+launcher). Without a key the tool returns CPI and Eurobonds only; custom `evds_codes` require a
+key. Use `view="series"` for monthly history.
+
+Use `data.market.bist_sectors` to compare BIST price indices in TRY and USD against BIST 100.
+Returns exclude cash dividends and use shared dates. FX beta measures sensitivity to changes in
+USDTRY; it is not a forecast or a company's balance-sheet FX exposure.
+
+For Turkish stock portfolios, the `bist-portfolio` skill uses macro and sector data to frame a
+full-universe screen and compares USD portfolio risk against BIST 100. Use daily bars for cross-market baskets. If any symbol fails,
 the whole basket fails. Alignment matches dates, not closing times, and leaves prices in their
 listing currencies. Use `calc` to divide aligned TRY levels by `USDTRY=X` before optimizing.
 A valid TRY FX close is kept even if the rest of the candle is invalid. An invalid close fails the
@@ -189,7 +200,8 @@ Do not share licensed data in exported reports or channels. See [IstFin's terms]
 ## Your data and keys
 
 - `trading-r1 secrets set` and the key forms store keys in `~/.trading-r1/credentials.json`, and
-  `trading-r1 daemon install` copies them to `~/.trading-r1/daemon.env`. Only you can read these
+  `trading-r1 daemon install` copies supported keys (including `EVDS_API_KEY`) from the shell
+  to that store; non-secret settings go in `~/.trading-r1/daemon.env`. Only you can read these
   files, but your own processes and any backup tool that copies the folder can too.
 - Sessions, notes and settings are plain files under `~/.trading-r1/`.
 - The backend listens on `127.0.0.1` by default, and every route but its liveness check needs a
