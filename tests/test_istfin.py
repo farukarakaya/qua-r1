@@ -143,6 +143,74 @@ class IstfinTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private details", str(err.exception))
         self.assertEqual(calls, ["/v1/news/823"])
 
+    async def test_plan_limit_retries_once_with_same_filters_and_reports_window(self):
+        calls = []
+
+        def respond(request):
+            calls.append(dict(request.url.params))
+            if len(calls) == 1:
+                return httpx.Response(403, json={"error": {"code": "PLAN_LIMIT_EXCEEDED"}})
+            return httpx.Response(200, json={"data": [], "meta": {}})
+
+        self.transport(respond)
+        result = await istfin._news(
+            istfin.NewsRequest(
+                symbols=["XIST:TEST", "XIST:OTHER"],
+                types=["CA"],
+                query="cash dividend",
+                start="2025-01-01",
+                end="2025-04-30",
+                limit=12,
+            )
+        )
+        filters = {"symbols": "TEST,OTHER", "types": "CA", "q": "cash dividend", "limit": "12"}
+        self.assertEqual(
+            calls,
+            [
+                {**filters, "from": "2025-01-01", "to": "2025-04-30"},
+                {**filters, "from": "2025-04-01", "to": "2025-04-30"},
+            ],
+        )
+        self.assertEqual(
+            result.output.coverage.model_dump(),
+            {
+                "narrowed": True,
+                "queried_from": "2025-04-01",
+                "queried_to": "2025-04-30",
+            },
+        )
+
+    async def test_persistent_plan_limit_reports_remaining_error_without_third_request(self):
+        calls = []
+
+        def respond(request):
+            calls.append(dict(request.url.params))
+            return httpx.Response(403, json={"error": {"code": "PLAN_LIMIT_EXCEEDED"}})
+
+        self.transport(respond)
+        with self.assertRaisesRegex(ToolError, "2025-04-01 to 2025-04-30.*plan limit") as err:
+            await istfin._ratios(istfin.RatiosRequest(symbol="TEST.IS", end="2025-04-30"))
+        self.assertEqual(err.exception.code, "istfin_plan_limit")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[-1]["metrics"], calls[0]["metrics"])
+        calls.clear()
+        with self.assertRaisesRegex(ToolError, "plan limit"):
+            await istfin._news(istfin.NewsRequest(start="2025-01-01", end="2025-04-30", cursor=823))
+        self.assertEqual(len(calls), 1)
+
+    async def test_auth_does_not_narrow_or_retry(self):
+        calls = []
+
+        def respond(request):
+            calls.append(request.url.path)
+            return httpx.Response(401, json={"error": {"code": "PLAN_LIMIT_EXCEEDED"}})
+
+        self.transport(respond)
+        with self.assertRaisesRegex(ToolError, "rejected the API key") as err:
+            await istfin._news(istfin.NewsRequest(start="2025-01-01", end="2025-04-30"))
+        self.assertEqual(err.exception.code, "istfin_auth")
+        self.assertEqual(calls, ["/v1/news"])
+
     async def test_istfin_session_is_opt_in_and_cannot_be_uploaded(self):
         self.assertIsNone(catalog_tool_registry().get("data_market_istfin_ratios"))
         self.assertIsNotNone(

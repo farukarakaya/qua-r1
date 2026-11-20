@@ -16,12 +16,14 @@ from trading_r1.contract.spec import Output, Provenance, Result, ToolError, Tool
 from trading_r1.contract.units import Code, Day, Multiple, Text
 from trading_r1.runtime.sources import cite_source
 from trading_r1.state.credentials import overlay
-from trading_r1.tools.data.bist import bist_ticker
+from trading_r1.tools.data.bist import bist_ticker, istanbul
 from trading_r1.tools.data.common import Symbol, SymbolList
 
 _BIST = "Borsa İstanbul via IstFin"
 _KAP = "KAP via IstFin"
 _CODE = re.compile(r"[A-Z0-9]{3,8}")
+_PLAN_LIMIT = "istfin_plan_limit"
+_RETRY_WINDOW_DAYS = 30
 
 
 def _qualified_code(symbol: str) -> str:
@@ -38,11 +40,21 @@ def _failure(response: httpx.Response) -> ToolError:
         code = None
     match response.status_code:
         case 401:
-            return ToolError("IstFin rejected the API key. Check ISTFIN_API_KEY on the backend.")
+            return ToolError(
+                "IstFin rejected the API key. Check ISTFIN_API_KEY on the backend.",
+                code="istfin_auth",
+            )
         case 403 if code == "PLAN_LIMIT_EXCEEDED":
-            return ToolError("IstFin plan limit exceeded. Narrow the date range or symbol list.")
+            return ToolError(
+                "IstFin plan limit exceeded. Narrow the date range or symbol list.",
+                code=_PLAN_LIMIT,
+                retry="change_request",
+            )
         case 403:
-            return ToolError("IstFin denied access. Check the subscription and API key scopes.")
+            return ToolError(
+                "IstFin denied access. Check the subscription and API key scopes.",
+                code="istfin_permission",
+            )
         case 404:
             return ToolError("IstFin has no record for this request.")
         case 429:
@@ -54,7 +66,11 @@ def _failure(response: httpx.Response) -> ToolError:
             seconds = response.headers.get("Retry-After", "")
             if re.fullmatch(r"[0-9]{1,6}", seconds):
                 message += f" Retry after {seconds} seconds."
-            return ToolError(message, retry="later")
+            return ToolError(
+                message,
+                code="istfin_quota" if code == "QUOTA_EXCEEDED" else "istfin_rate_limit",
+                retry="later",
+            )
         case _:
             return ToolError(f"IstFin request failed (HTTP {response.status_code}).")
 
@@ -86,6 +102,41 @@ async def _get[T](
         return schema.validate_python(body["data"], extra="ignore"), meta
     except (ValueError, KeyError, TypeError):
         raise ToolError("IstFin returned an invalid response.") from None
+
+
+async def _get_window[T](
+    path: str, schema: TypeAdapter[T], params: dict[str, str | int]
+) -> tuple[T, dict, Coverage]:
+    queried = params
+    narrowed = False
+    try:
+        data, meta = await _get(path, schema, queried)
+    except ToolError as error:
+        if error.code != _PLAN_LIMIT or "cursor" in params:
+            raise
+        end = (
+            dt.date.fromisoformat(str(params["to"]))
+            if "to" in params
+            else dt.datetime.now(istanbul()).date()
+        )
+        start = end - dt.timedelta(days=_RETRY_WINDOW_DAYS - 1)
+        if "from" in params and dt.date.fromisoformat(str(params["from"])) >= start:
+            raise
+        queried = {**params, "from": start.isoformat(), "to": end.isoformat()}
+        narrowed = True
+        try:
+            data, meta = await _get(path, schema, queried)
+        except ToolError as remaining:
+            raise ToolError(
+                f"IstFin narrower window {start} to {end}: {remaining}",
+                code=remaining.code,
+                retry=remaining.retry,
+            ) from None
+    return (
+        data,
+        meta,
+        Coverage(queried_from=queried.get("from"), queried_to=queried.get("to"), narrowed=narrowed),
+    )
 
 
 class IstfinRequest(BaseModel):
@@ -152,9 +203,16 @@ class IstfinOutput(Output):
     model_config = ConfigDict(json_schema_mode_override="serialization")
 
 
+class Coverage(BaseModel):
+    queried_from: Day = None
+    queried_to: Day = None
+    narrowed: bool
+
+
 class NewsOutput(IstfinOutput):
     items: Annotated[list[Disclosure], hint(rows=20)]
     next_cursor: int | None = None
+    coverage: Coverage
 
 
 async def _news(req: NewsRequest) -> Result:
@@ -168,7 +226,7 @@ async def _news(req: NewsRequest) -> Result:
         params["q"] = req.query
     if req.cursor is not None:
         params["cursor"] = req.cursor
-    items, meta = await _get("/v1/news", TypeAdapter(list[Disclosure]), params)
+    items, meta, coverage = await _get_window("/v1/news", TypeAdapter(list[Disclosure]), params)
     cursor = None
     if meta.get("hasMore"):
         raw_cursor = meta.get("nextCursor")
@@ -178,7 +236,10 @@ async def _news(req: NewsRequest) -> Result:
     for item in items:
         _cite(item)
     as_of = items[0].published_at if items else None
-    return Result(NewsOutput(items=items, next_cursor=cursor), Provenance(source=_KAP, as_of=as_of))
+    return Result(
+        NewsOutput(items=items, next_cursor=cursor, coverage=coverage),
+        Provenance(source=_KAP, as_of=as_of),
+    )
 
 
 class DisclosureRequest(IstfinRequest):
@@ -236,21 +297,25 @@ class RatioRow(ProviderRow):
 class RatiosOutput(IstfinOutput):
     symbol: Code
     rows: Annotated[list[RatioRow], hint(rows=20)]
+    coverage: Coverage
 
 
 async def _ratios(req: RatiosRequest) -> Result:
     ticker = _qualified_code(req.symbol)
     metrics = dict.fromkeys(req.metrics)
     params = {**req.date_params(), "limit": req.limit, "metrics": ",".join(metrics)}
-    rows, _ = await _get(f"/v1/ratios/{ticker}", TypeAdapter(list[RatioRow]), params)
+    rows, _, coverage = await _get_window(
+        f"/v1/ratios/{ticker}", TypeAdapter(list[RatioRow]), params
+    )
     if not rows:
-        raise ToolError(f"IstFin returned no valuation ratios for XIST:{ticker} in this window.")
+        window = f"{coverage.queried_from or 'open'} to {coverage.queried_to or 'open'}"
+        raise ToolError(f"IstFin returned no valuation ratios for XIST:{ticker} ({window}).")
     rows.sort(key=lambda row: row.day)
     for row in rows:
         row.values = {metric: row.values.get(metric) for metric in metrics}
     symbol = f"XIST:{ticker}"
     return Result(
-        RatiosOutput(symbol=symbol, rows=rows),
+        RatiosOutput(symbol=symbol, rows=rows, coverage=coverage),
         Provenance(source=_BIST, subject=symbol, as_of=rows[-1].day),
     )
 
@@ -263,7 +328,8 @@ ISTFIN_SPECS = (
         tier="deferred",
         description="Search IstFin's KAP disclosures by company, type, title or date. Returns one "
         "page with publication timestamps and next_cursor if more are available. Read individual "
-        "reports with data.market.istfin_disclosure. History is plan-limited.",
+        "reports with data.market.istfin_disclosure. If plan-limited, coverage can narrow to "
+        "30 days. Report the narrower dates and use them with the returned cursor.",
         request_schema=NewsRequest,
         handler=_news,
         output=NewsOutput,
