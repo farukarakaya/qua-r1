@@ -40,7 +40,7 @@ Imports flow downward (`CONTRIBUTING.md`). Preserve these layer boundaries:
 4. `trading_r1/tools/`:
    - `core/`: `update_plan`, `ask_user`, `evidence`, `load_tool`, `load_skill`, `remember`/`forget`, `read_doc` (in `docs-` sessions).
    - `web/`: `search`, `visit`, `compose_citations` bound per run to a `FetchCache`.
-   - `data/`: market prices, quotes, news, symbol search, BIST (`borsapy`), IstFin (KAP, valuation ratios, index weights), macro series, and upstream Tauric tools.
+   - `data/`: market prices, quotes, news, symbol search, BIST (`borsapy`), IstFin (KAP and valuation ratios), macro series, and upstream Tauric tools.
    - `compute/`: pure-math analytics (`arithmetic`, `valuation`, `modeling`, `risk`, `derivatives`, `fixed_income`, `portfolio`, `statistics`, `technical`). Keep compute tools free of network I/O and data-source coupling.
 5. `trading_r1/assembly.py` and `trading_r1/research.py`: wire registries, modes, skills, and providers into `run_research` and `run_logged`.
 6. Top-level subsystems: `service/` (FastAPI loopback server with bearer auth), `host/` (instance lock and daemon), `scheduler/`, `delivery/` (email, Telegram, folder), `sync/`, `report/` (PDF/HTML/Markdown), `documents.py` (`trading-r1 docs` local PDF OCR store using the `gpt-ocr` profile), and `cli/`.
@@ -51,7 +51,7 @@ Imports flow downward (`CONTRIBUTING.md`). Preserve these layer boundaries:
 - **No silent fallback:** When a configured provider cannot serve a request, fail explicitly with `ToolError` rather than falling back to another provider.
 - **BIST routing (`trading_r1/tools/data/bist.py`, `pricing.py`, `market/bist_data.py`):** BIST tickers (`XIST:THYAO` or `THYAO.IS`) route through `borsapy` in `TRY` (split-adjusted daily/weekly/monthly bars; intraday bars are rejected for BIST). `data.market.aligned_prices` joins strictly on shared dates and fails the whole basket if any symbol fails.
 - **PDF OCR and document sessions (`documents.py`, `state/documents.py`, `tools/core/read_doc.py`):** `trading-r1 docs add` uses the dedicated `gpt-ocr` profile (`openai-responses`, `ocr` role) and stores transcripts under `$TR1_HOME/docs/<sha256>.json`. Document sessions (`docs-` prefix) are opt-in and excluded from session sync.
-- **IstFin (`tools/data/market/istfin.py`):** Opt-in BIST research for KAP disclosures, valuation ratios, and index weights when configured.
+- **IstFin (`tools/data/market/istfin.py`):** Opt-in BIST research for KAP disclosures and valuation ratios when configured.
 
 ## Product decisions
 
