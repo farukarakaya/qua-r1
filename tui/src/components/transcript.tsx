@@ -11,13 +11,16 @@
  * position) + reactive part accessors + <markdown streaming>, so streaming
  * updates the mounted node in place instead of remounting it (no flash).
  */
-import { Index, Match, Show, Switch, type JSX } from "solid-js"
+import { Index, Match, Show, Switch, type JSX, onCleanup } from "solid-js"
 
 import { useRenderer } from "@opentui/solid"
 import {
   type CliRenderer,
+  CliRenderEvents,
   type RGBA,
+  type Renderable,
   type ScrollBoxRenderable,
+  type Selection,
   SyntaxStyle,
   TextAttributes,
 } from "@opentui/core"
@@ -226,9 +229,27 @@ function TurnView(props: {
 export function Transcript(props: {
   turns: Turn[]
   scrollRef?: (r: ScrollBoxRenderable) => void
+  onCopy: (text: string) => void
   showReasoning: boolean
   toolDetails: ToolDetails
 }) {
+  const renderer = useRenderer()
+  let scroller: ScrollBoxRenderable | undefined
+  function inTranscript(renderable: Renderable): boolean {
+    for (let node: Renderable | null = renderable; node; node = node.parent) {
+      if (node === scroller) return true
+    }
+    return false
+  }
+  // OpenTUI emits selection on mouse release, including releases outside the scrollbox.
+  function copySelection(selection: Selection) {
+    if (selection.isStart || !selection.selectedRenderables.every(inTranscript)) return
+    const text = selection.getSelectedText()
+    if (text.trim()) props.onCopy(text)
+  }
+  renderer.on(CliRenderEvents.SELECTION, copySelection)
+  onCleanup(() => renderer.off(CliRenderEvents.SELECTION, copySelection))
+
   // The frame clips what scrolls under it: a bordered block that is partly scrolled out would
   // otherwise draw its edge over the title and the frame.
   return (
@@ -244,7 +265,10 @@ export function Transcript(props: {
       titleColor={theme.primary}
     >
       <scrollbox
-        ref={props.scrollRef}
+        ref={(r) => {
+          scroller = r
+          props.scrollRef?.(r)
+        }}
         flexGrow={1}
         minHeight={0}
         stickyScroll

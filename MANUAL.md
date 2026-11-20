@@ -20,6 +20,12 @@ Each command takes `--help`, which also lists the less common commands and optio
 `sessions`, `jobs` and most of `sync` need a running backend: the terminal's, the service, or
 `trading-r1 serve`.
 
+## Copy transcript text
+
+Drag across text in the transcript and release to copy the highlighted passage. Use **Copy answer**
+from the `/` palette to copy the full latest answer with the keyboard. Both require a terminal that
+allows OSC 52 clipboard writes.
+
 ## Settings
 
 Open **Settings** from the palette.

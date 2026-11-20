@@ -309,13 +309,16 @@ function AppInner() {
 
   // ----- palette commands ------------------------------------------------- //
 
-  // /copy: the answer to the system clipboard via OSC 52 (works over SSH).
-  function copyAnswer() {
-    const text = lastAnswer()
+  // OSC 52 sends a clipboard request to the terminal, including over SSH.
+  function copyText(text: string, label: string) {
     if (!text) return
     const b64 = Buffer.from(text, "utf8").toString("base64")
     process.stdout.write(`\x1b]52;c;${b64}\x07`)
-    notify("Answer copied to the clipboard")
+    notify(`${label} copied to the clipboard`)
+  }
+
+  function copyAnswer() {
+    copyText(lastAnswer(), "Answer")
   }
 
   // /export: the report as a page (html), as markdown, and the full trajectory (json), to cwd.
@@ -734,6 +737,7 @@ function AppInner() {
               <Transcript
                 turns={turns()}
                 scrollRef={(r) => (scroller = r)}
+                onCopy={(text) => copyText(text, "Selection")}
                 showReasoning={prefs().show_reasoning}
                 toolDetails={prefs().tool_details}
               />
