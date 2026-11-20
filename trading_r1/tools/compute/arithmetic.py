@@ -43,8 +43,9 @@ _DESCRIPTION = (
     "(values={'rev': 'prev:<id>.lines.revenue'}, expression 'rev[-1]/rev[0] - 1') or "
     "scalar or series expressions over earlier values; names must be identifiers (e.g. ocf_fy26). "
     "Index a series with [i], or pass it to sum/mean/median/stdev/var/min/max/len/npv/irr. "
-    "Divide two equal-length series pointwise with `a / b`, e.g. to convert aligned prices "
-    "using FX. `returns(prices)` computes adjacent simple returns of positive prices. "
+    "Apply + - * / pointwise to equal-length series or a series and a scalar (e.g. `stock / fx` "
+    "or `100 * (0.6 * a / a[0] + 0.4 * b / b[0])`). `returns(prices)` computes adjacent simple "
+    "returns of positive prices. "
     'Both support named result series: \'{"stock": stock / fx, "benchmark": returns(index / fx)}\'.'
 )
 
@@ -56,6 +57,12 @@ _BIN_OPS = {
     ast.Pow: lambda a, b: math.pow(a, b),  # floats: overflows fast, never a huge int
     ast.Mod: operator.mod,
     ast.FloorDiv: operator.floordiv,
+}
+_SERIES_BIN_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
 }
 _UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
 _SCALAR_FUNCS = {
@@ -95,7 +102,7 @@ _SUPPORTED = (
     "numbers, + - * / ** % //, (), a top-level [list] (rows may be [lists], for a grid) or "
     "{'label': expr or [list]}, names from `values` (series indexed with [i]), pi, e, and "
     "abs/round/min/max/sqrt/exp/ln/log/log10/floor/ceil/sum/mean/median/stdev/var/len/npv/irr, "
-    "equal-length series division and returns(prices)"
+    "pointwise + - * / on equal-length series or scalars, and returns(prices)"
 )
 
 Num = float | int
@@ -142,20 +149,25 @@ class _Eval:
         if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
             left, right = self.any(node.left), self.any(node.right)
             if isinstance(left, list) or isinstance(right, list):
-                if not (
-                    isinstance(node.op, ast.Div)
-                    and isinstance(left, list)
-                    and isinstance(right, list)
-                    and left
-                    and len(left) == len(right)
-                ):
-                    raise ToolError(
-                        "series arithmetic requires two nonempty equal-length series with /"
-                    )
-                return [a / b for a, b in zip(left, right, strict=True)]
+                op = _SERIES_BIN_OPS.get(type(node.op))
+                if op is None:
+                    raise ToolError("series arithmetic supports only + - * /")
+                if isinstance(left, list) and isinstance(right, list):
+                    if not left or len(left) != len(right):
+                        raise ToolError("series arithmetic requires nonempty equal-length series")
+                    return [op(a, b) for a, b in zip(left, right, strict=True)]
+                if isinstance(left, list):
+                    if not left:
+                        raise ToolError("series arithmetic requires a nonempty series")
+                    return [op(a, right) for a in left]
+                if not right:
+                    raise ToolError("series arithmetic requires a nonempty series")
+                return [op(left, b) for b in right]
             return _BIN_OPS[type(node.op)](left, right)
         if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
-            return _UNARY_OPS[type(node.op)](self.scalar(node.operand))
+            val = self.any(node.operand)
+            op = _UNARY_OPS[type(node.op)]
+            return [op(x) for x in val] if isinstance(val, list) else op(val)
         if isinstance(node, ast.Subscript):
             return self._index(node)
         if isinstance(node, ast.List | ast.Tuple):  # a series written out, as a function's argument

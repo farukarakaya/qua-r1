@@ -39,7 +39,11 @@ class DrawdownRequest(BaseModel):
     returns: Returns | None = Field(
         None, min_length=1, description="Simple per-period returns (instead of closes)."
     )
-    dates: list[str] | None = Field(None, description="Dates aligned to closes (optional).")
+    dates: list[str] | None = Field(
+        None,
+        description="Dates aligned to closes (length N) or to returns' price path "
+        "(length len(returns) + 1, optional).",
+    )
     limit: int = Field(3, ge=1, le=20, description="How many worst episodes to list.")
 
     @model_validator(mode="after")
@@ -47,10 +51,12 @@ class DrawdownRequest(BaseModel):
         if (self.closes is None) == (self.returns is None):
             raise ValueError("pass exactly one of closes or returns")
         if self.dates is not None:
-            if self.closes is None:
-                raise ValueError("dates align to closes; pass closes to use dates")
-            if len(self.dates) != len(self.closes):
+            if self.closes is not None and len(self.dates) != len(self.closes):
                 raise ValueError("dates must be the same length as closes")
+            if self.returns is not None and len(self.dates) != len(self.returns) + 1:
+                raise ValueError(
+                    "dates with returns must match the wealth path length (len(returns) + 1)"
+                )
         return self
 
 
