@@ -189,9 +189,10 @@ def _apply_tail(item: Any, tail_steps: tuple[_Step, ...], raw: str) -> Any | Cha
 # a reference inside text: dotted keys and literal indexers; a computed index (``[i]``) and
 # anything glued to a preceding word stay with the text
 _INDEXER_PATTERN = r"\[(?:(?:-?\d+)?:(?:-?\d+)?|-?\d+|\*)\]"
-_EMBEDDED_RE = re.compile(rf"(?<![\w.])prev:e\d+(?:\.\w+|{_INDEXER_PATTERN})*")
-# Standalone values can use qualified keys like XIST:LOGO. Do not widen the grammar for
-# references embedded in expressions, where a colon may instead separate a dict key and value.
+# Inside expressions, recognize exchange-qualified keys like XIST:LOGO before an ordinary
+# key. Do not consume arbitrary colons, which may instead separate a dict key and value.
+_EMBEDDED_KEY = r"(?:[A-Z][A-Z0-9]*:[A-Z0-9]+(?!\w)|\w+)"
+_EMBEDDED_RE = re.compile(rf"(?<![\w.])prev:e\d+(?:\.{_EMBEDDED_KEY}|{_INDEXER_PATTERN})*")
 _WHOLE_VALUE_REF_RE = re.compile(rf"prev:e\d+(?:\.\w+(?::\w+)*|{_INDEXER_PATTERN})*")
 
 
@@ -225,8 +226,8 @@ def embed_references(
         return name
 
     def _embed(text: Any) -> Any:
-        if not isinstance(text, str) or _EMBEDDED_RE.fullmatch(text.strip()):
-            return text  # not text, or a whole reference (resolved as is)
+        if not isinstance(text, str):
+            return text
         return _EMBEDDED_RE.sub(_name, text)
 
     text = _embed(args.get(text_field))

@@ -33,7 +33,9 @@ from trading_r1.tools.compute.series import MAX_SERIES_LEN, pct_returns
 
 _DESCRIPTION = (
     "Evaluate arithmetic exactly (growth rates, ratios, percentages, sums), e.g. "
-    "'(37-13)/13*100' for a percent change. `prev:` references sit right in the expression. "
+    "'(37-13)/13*100' for a percent change. `prev:` references can sit in the expression. "
+    "For a qualified quote key, use a whole named input: "
+    "values={'price': 'prev:e12.quotes.XIST:FROTO.price'}, expression 'price * 100'. "
     "Operators + - * / ** % // and parentheses; functions abs, round, min, max, sqrt, exp, ln "
     "(= log), log10, floor, ceil, sum, mean, median, len, stdev and var (sample), npv(rate, "
     "flows) and irr(flows) "
