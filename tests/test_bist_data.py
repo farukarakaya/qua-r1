@@ -179,6 +179,38 @@ class BistProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(payout["NetRate"])
         self.assertEqual(rights["RightsIssue"], 100)
 
+    async def test_corporate_actions_disclose_known_incomplete_provider_rows(self) -> None:
+        # Public İş Yatırım row shapes, with synthetic dates/amounts. KAP 1681093 is a
+        # capital action, while KAP 1641922 distinguishes dividend installments and dates.
+        known_date = 1754254800000
+        default_date = -62135596800000  # .NET DateTime.MinValue, not an event date
+        valid_cash = {"SHT_KODU": "04", "SHHE_TARIH": known_date, "SHHE_NAKIT_TM_ORAN": 175}
+        rows = [
+            valid_cash,
+            valid_cash | {"SHHE_TARIH": default_date},
+            {"SHT_KODU": "02", "SHHE_TARIH": default_date, "SHHE_BDSZ_IK_ORAN": 200},
+            valid_cash | {"SHHE_NAKIT_TM_ORAN": 0, "SHHE_BDSZ_IK_ORAN": 500},
+            {
+                "SHT_KODU": "02",
+                "SHHE_TARIH": known_date,
+                "SHHE_BDSZ_IK_ORAN": 200,
+                "HSP_BOLUNME_SONRASI_SERMAYE": -100,
+            },
+        ]
+        provider = SimpleNamespace(_fetch_sermaye_data=Mock(return_value={"d": rows}))
+        with patch("borsapy._providers.isyatirim.get_isyatirim_provider", return_value=provider):
+            result = await bist_data.SPEC.handler(
+                bist_data.BistDataRequest(symbol="XIST:TEST", dataset="corporate_actions")
+            )
+        cash, capital = result.output.rows
+        self.assertAlmostEqual(cash["Amount"], 1.75)  # % of TRY 1 nominal -> TRY per share
+        self.assertEqual(cash["Date"][:10], "2025-08-04")
+        self.assertEqual(capital["BonusFromCapital"], 200)
+        self.assertIsNone(capital["Capital"])
+        notes = " ".join(result.output.notes)
+        for issue in ("date unknown", "type 04", "capital amount unknown", "Verify with KAP"):
+            self.assertIn(issue, notes)
+
     async def test_disclosure_uses_id_without_a_ticker(self) -> None:
         content = Mock(return_value="<header>Site menu</header><main><p>Pay alımı</p></main>")
         with (
