@@ -18,7 +18,7 @@ _MAX_READ_CHARS = 16_000
 
 
 class ReadDocumentRequest(BaseModel):
-    document_id: str = Field(pattern=DOCUMENT_ID_PATTERN, description="ID from the report catalog.")
+    document_id: str = Field(pattern=DOCUMENT_ID_PATTERN, description="ID from search_docs.")
     start_page: int = Field(1, ge=1, description="First physical PDF page, inclusive.")
     end_page: int | None = Field(
         None, ge=1, description="Last page, inclusive; omit to read to the end."
@@ -70,8 +70,9 @@ SPEC = ToolSpec(
     result_kind="data",
     tier="core",
     description=(
-        "Read saved OCR pages from a report in the imported report catalog. "
-        "Select a relevant page range when known; omit the range for a short whole report. "
+        "Read saved OCR pages from an imported PDF found with search_docs. "
+        "For one page set start_page and end_page to that number. "
+        "Omit the range only for a short whole report. "
         "Cite each claim with the returned page's [citation_index]."
     ),
     request_schema=ReadDocumentRequest,

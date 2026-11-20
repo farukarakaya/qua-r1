@@ -10,7 +10,9 @@ import httpx
 
 from trading_r1.assembly import catalog_tool_registry
 from trading_r1.contract.spec import ToolError
-from trading_r1.service.routes.sessions import new_session
+from trading_r1.providers import ModelProfile
+from trading_r1.service import state
+from trading_r1.service.routes.sessions import new_session, status
 from trading_r1.service.syncing import SyncRuntime, is_synced_kind
 from trading_r1.state.credentials import set_value
 from trading_r1.sync.engine import SyncEngine
@@ -34,6 +36,25 @@ class IstfinTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(new_session()["id"].startswith("istfin-"))
         self.assertTrue(is_synced_kind(ordinary))
         self.assertFalse(is_synced_kind(private))
+
+    async def test_pdf_istfin_status_and_prompt_overhead_follow_the_backend_key(self):
+        profile = ModelProfile(name="fixture", model="fixture", context_window=64_000)
+        with (
+            patch.object(state, "resolve_profile", return_value=profile),
+            patch.object(state, "prompt_overhead", return_value=123) as overhead,
+        ):
+            for session_id, enabled in (("docs-abc", True), ("ordinary-abc", False)):
+                with self.subTest(session_id=session_id):
+                    current = await status(session_id)
+                    self.assertEqual(current["istfin"], enabled)
+                    self.assertEqual(overhead.call_args.kwargs["use_istfin"], enabled)
+            del os.environ["ISTFIN_API_KEY"]
+            self.assertFalse((await status("docs-abc"))["istfin"])
+            self.assertFalse(overhead.call_args.kwargs["use_istfin"])
+            set_value("ISTFIN_API_KEY", "stored-fixture")
+            self.assertTrue((await status("docs-abc"))["istfin"])
+            self.assertTrue(overhead.call_args.kwargs["use_istfin"])
+        self.assertFalse(is_synced_kind("docs-abc"))
 
     def transport(self, respond):
         client = httpx.AsyncClient

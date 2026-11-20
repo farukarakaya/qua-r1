@@ -337,9 +337,11 @@ def utc_minute(start: str) -> str:
     return dt.datetime.fromisoformat(start).astimezone(dt.UTC).isoformat(timespec="minutes")
 
 
-def resample(rows: list[dict[str, Any]], interval: str) -> list[dict[str, Any]]:
-    """Daily bars as weekly (ISO week) or monthly bars, dated by their last session; the newest
-    group may be partial, as a live week or month is."""
+def resample(
+    rows: list[dict[str, Any]], interval: str, *, complete_extrema: bool = False
+) -> list[dict[str, Any]]:
+    """Group daily bars by ISO week or month and date each group by its last session.
+    With complete_extrema, withhold a group's high or low if any daily value is missing."""
     if interval == "1d":
         return rows
     import datetime as dt
@@ -354,12 +356,18 @@ def resample(rows: list[dict[str, Any]], interval: str) -> list[dict[str, Any]]:
     out = []
     for g in groups.values():
         volumes = [r["volume"] for r in g]
+        highs = [r["high"] for r in g if is_num(r["high"])]
+        lows = [r["low"] for r in g if is_num(r["low"])]
         out.append(
             {
                 "date": g[-1]["date"],
                 "open": g[0]["open"],
-                "high": max((r["high"] for r in g if is_num(r["high"])), default=None),
-                "low": min((r["low"] for r in g if is_num(r["low"])), default=None),
+                "high": max(highs, default=None)
+                if not complete_extrema or len(highs) == len(g)
+                else None,
+                "low": min(lows, default=None)
+                if not complete_extrema or len(lows) == len(g)
+                else None,
                 "close": g[-1]["close"],
                 "volume": sum(volumes) if all(is_num(v) for v in volumes) else None,
             }
@@ -493,9 +501,9 @@ async def _bist_fx_bars(
         earliest = last - dt.timedelta(days=sessions * 2 + 14)
     if last < max(earliest, floor):
         raise ToolError("No FX sessions in the requested history window.")
-    rows = await bist.fetch_fx_daily(base, max(earliest, floor), last)
+    rows, close_only = await bist.fetch_fx_daily(base, max(earliest, floor), last)
     if not rows:
-        raise ToolError(f"No {bist.FX_SOURCE} bars for {base}TRY in the requested window.")
+        raise ToolError(f"No usable {bist.FX_SOURCE} bars for {base}TRY in the requested window.")
     notes: list[str] = []
     if earliest < floor or (not first and not sessions):
         notes.append(f"TRY FX history requests are limited to dates on or after {floor}.")
@@ -504,8 +512,16 @@ async def _bist_fx_bars(
         if len(rows) < sessions:
             notes.append(f"Only {len(rows)} of the requested {sessions} FX sessions returned.")
     pair = f"{base}TRY"
+    if close_only:
+        close_only = [date for date in close_only if date >= rows[0]["date"]]
+        if close_only:
+            sample = ", ".join(close_only[:4]) + (", …" if len(close_only) > 4 else "")
+            notes.append(
+                f"{pair} kept FX closes for {len(close_only)} bar(s) without usable "
+                f"open/high/low data: {sample}."
+            )
     return Bars(
-        resample(rows, interval),
+        resample(rows, interval, complete_extrema=True),
         Instrument("fx", f"fx:{pair}", f"/fx/{pair}", pair),
         currency="TRY",
         price_basis="quoted",

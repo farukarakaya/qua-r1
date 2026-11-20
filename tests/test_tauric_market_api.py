@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, patch
 import pandas as pd
 
 from trading_r1.contract.spec import ToolError
+from trading_r1.tools.compute.risk.drawdown import SPEC as DRAWDOWN
+from trading_r1.tools.compute.risk.drawdown import DrawdownRequest
 from trading_r1.tools.data import bist, pricing
 from trading_r1.tools.data.market import aligned_prices, prices, quotes
 from trading_r1.tools.data.tauric import stated_limits
@@ -172,8 +174,8 @@ class TauricMarketApiTests(unittest.IsolatedAsyncioTestCase):
             {
                 "Open": [50.1, 50.2, 50.4],
                 "High": [50.3, 50.5, 50.6],
-                "Low": [50.0, 50.1, 50.3],
-                "Close": [50.2, 50.4, 50.5],
+                "Low": [50.0, 0.0, 50.1],  # The feed occasionally publishes a broken OHLC bar.
+                "Close": [50.2, 100.4, 50.2],  # Retain the FX spike in USD risk calculations.
             },
             index=pd.to_datetime(["2026-11-16 03:00", "2026-11-17 03:00", "2026-11-18 03:00"]),
         )
@@ -182,7 +184,7 @@ class TauricMarketApiTests(unittest.IsolatedAsyncioTestCase):
                 "Open": [320.0, 322.0, 325.0],
                 "High": [324.0, 326.0, 330.0],
                 "Low": [319.0, 321.0, 324.0],
-                "Close": [322.0, 325.0, 328.0],
+                "Close": [322.0, 322.0, 325.0],
                 "Volume": [1_000_000, 1_100_000, 1_200_000],
             },
             index=pd.to_datetime(["2026-11-16 03:00", "2026-11-17 03:00", "2026-11-18 03:00"]),
@@ -239,8 +241,37 @@ class TauricMarketApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(q.output.quotes["USDTRY"].price, 50.4651)
         self.assertEqual(q.output.quotes["USDTRY"].currency, "TRY")
         self.assertEqual(p.output.currency, "TRY")
-        self.assertEqual(p.output.current, 50.5)
-        self.assertFalse(any("withholds FX daily closes" in n for n in p.output.notes))
+        self.assertEqual(p.output.current, 50.2)
         self.assertEqual(aligned.output.dates, ["2026-11-16", "2026-11-17", "2026-11-18"])
+        try_closes = aligned.output.series["THYAO.IS"]
+        fx_closes = aligned.output.series["USDTRY=X"]
+        self.assertEqual(fx_closes, [50.2, 100.4, 50.2])
+        risk = await DRAWDOWN.handler(
+            DrawdownRequest(
+                closes=[stock / fx for stock, fx in zip(try_closes, fx_closes, strict=True)],
+                dates=aligned.output.dates,
+            )
+        )
+        self.assertAlmostEqual(risk.payload["max_drawdown"], -0.5)
         self.assertEqual(aligned.output.per_symbol["USDTRY=X"].source, bist.FX_SOURCE)
-        self.assertFalse(any("withholds FX daily closes" in n for n in aligned.output.notes))
+        self.assertEqual(aligned.output.per_symbol["THYAO.IS"].dropped, 0)
+        note = "USDTRY kept FX closes for 1 bar(s) without usable open/high/low data: 2026-11-17."
+        self.assertIn(note, p.output.notes)
+        self.assertIn(note, aligned.output.notes)
+        bar = p.payload["bars"][1]
+        self.assertEqual(bar["close"], 100.4)
+        self.assertTrue(all(bar[k] is None for k in ("open", "high", "low")))
+        (weekly,) = pricing.resample(p.payload["bars"], "1wk", complete_extrema=True)
+        self.assertEqual(weekly["close"], 50.2)
+        self.assertIsNone(weekly["high"])
+        self.assertIsNone(weekly["low"])
+        with patch.dict("sys.modules", {"borsapy": fake}):
+            fx_frame.loc["2026-11-17 03:00", "Close"] = float("nan")
+            with self.assertRaisesRegex(ToolError, "invalid USDTRY close on 2026-11-17"):
+                await aligned_prices.SPEC.handler(
+                    aligned_prices.AlignedPricesRequest(
+                        symbols=["THYAO.IS", "USDTRY=X"],
+                        start=dt.date(2026, 11, 16),
+                        end=dt.date(2026, 11, 18),
+                    )
+                )

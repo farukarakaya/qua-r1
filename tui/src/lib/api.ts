@@ -52,6 +52,7 @@ interface SessionSummary {
 
 export interface StatusInfo {
   model: string
+  istfin?: boolean
   context_window: number
   tokens_used: number
   used_pct: number

@@ -33,6 +33,7 @@ from trading_r1.tools.compute import COMPUTE_SPECS
 from trading_r1.tools.compute.arithmetic import SPEC as CALC_SPEC
 from trading_r1.tools.core.plan import SPEC as PLAN_SPEC
 from trading_r1.tools.core.read_doc import SPEC as READ_DOC_SPEC
+from trading_r1.tools.core.search_docs import SPEC as SEARCH_DOCS_SPEC
 from trading_r1.tools.data.equity import EQUITY_DATA_SPECS
 from trading_r1.tools.data.macro import MACRO_DATA_SPECS
 from trading_r1.tools.data.market import MARKET_DATA_SPECS
@@ -62,6 +63,7 @@ def build_tool_registry(
     registry.register(CALC_SPEC)  # core: exact arithmetic so the model never computes in its head
     registry.register(PLAN_SPEC)  # core: a live research plan/checklist for multi-step work
     if use_documents:
+        registry.register(SEARCH_DOCS_SPEC)
         registry.register(READ_DOC_SPEC)
     if use_istfin:
         for spec in ISTFIN_SPECS:

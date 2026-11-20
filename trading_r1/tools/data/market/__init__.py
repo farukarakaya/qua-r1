@@ -8,6 +8,7 @@ futures positioning, the day's movers, the market digest and news."""
 from trading_r1.tools.data.market import (
     aligned_prices,
     bist_data,
+    bist_screen,
     digest,
     movers,
     news,
@@ -33,12 +34,14 @@ MARKET_DATA_SPECS = [
     digest.SPEC,
     news.SPEC,
     bist_data.SPEC,
+    bist_screen.SPEC,
 ]
 
 __all__ = [
     "MARKET_DATA_SPECS",
     "aligned_prices",
     "bist_data",
+    "bist_screen",
     "digest",
     "movers",
     "news",

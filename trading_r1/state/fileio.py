@@ -67,8 +67,11 @@ def read_private_json(path: Path, *, max_bytes: int | None = 1_000_000) -> Any:
             raise PrivateFileError(f"{path} is not your own file; remove it")
         if info.st_mode & 0o077:
             raise PrivateFileError(f"{path} is open to other users; run: chmod 600 {path}")
+        raw = fh.read(-1 if max_bytes is None else max_bytes + 1)
+        if max_bytes is not None and len(raw) > max_bytes:
+            raise PrivateFileError(f"{path} exceeds the file size limit")
         try:
-            return json.loads(fh.read(-1 if max_bytes is None else max_bytes).decode("utf-8"))
+            return json.loads(raw.decode("utf-8"))
         except ValueError as err:
             raise PrivateFileError(f"{path} is not valid JSON; fix or remove it") from err
 

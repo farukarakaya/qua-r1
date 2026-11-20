@@ -15,7 +15,6 @@ from trading_r1.providers.discovery import with_context_window
 from trading_r1.providers.health import ensure_local_ready
 from trading_r1.research import run_logged
 from trading_r1.runtime.auto_compact import compact_before_turn
-from trading_r1.runtime.session import ISTFIN_SESSION_PREFIX
 from trading_r1.service import preferences, state
 from trading_r1.service.events import SSE_VERSION
 from trading_r1.state.documents import DOCUMENT_SESSION_PREFIX, catalog_context
@@ -39,6 +38,7 @@ async def session_turn(
     async with state.session_lock(session_id):
         config = preferences.run_config()
         use_documents = session_id.startswith(DOCUMENT_SESSION_PREFIX)
+        use_istfin = await asyncio.to_thread(state.session_uses_istfin, session_id)
         document_context = await asyncio.to_thread(catalog_context) if use_documents else ""
         # a dead local backend fails here in seconds, not after compaction's retries
         if run_kw.get("client") is None and profile.reader_profile:
@@ -53,7 +53,11 @@ async def session_turn(
                     config=config,
                     emit=on_event or (lambda _kind, _data: None),
                     overhead=await asyncio.to_thread(
-                        state.prompt_overhead_of, session_id, mode, document_context
+                        state.prompt_overhead_of,
+                        session_id,
+                        mode,
+                        document_context,
+                        use_istfin=use_istfin,
                     ),
                 )
         except TimeoutError:  # the turn goes on with the context it has
@@ -74,7 +78,7 @@ async def session_turn(
                 on_event=on_event,
                 run=run,
                 memory=state.MEMORY,
-                use_istfin=session_id.startswith(ISTFIN_SESSION_PREFIX),
+                use_istfin=use_istfin,
                 config=config,
                 document_context=document_context,
                 **run_kw,
