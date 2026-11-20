@@ -77,8 +77,9 @@ between turns. Enabling PDFs permanently stops uploads for that session. Any tur
 synced remain in your account. Disabling PDFs stops new report searches and reads, but does not
 remove earlier excerpts or citations from the transcript. The setting is saved for when you resume.
 
-API clients can use `PUT /sessions/{id}/pdfs` with `{"enabled": true}` or `{"enabled": false}`.
-Session IDs starting with `docs-` still default to PDFs on; all others default to off.
+API clients can read the setting with `GET /sessions/{id}/pdfs` and change it with `PUT` at the
+same path using `{"enabled": true}` or `{"enabled": false}`. New `docs-` IDs default to PDFs on;
+all others default to off. Reusing a deleted PDF session ID starts with PDFs off and uploads still blocked.
 
 ## Reports, channels and jobs
 

@@ -25,6 +25,8 @@ jobs:
       - run: uv sync --locked
       - run: make lint
       - run: make smoke
+      - run: bun test
+        working-directory: tui
       - run: uv tool install . && trading-r1 --version
       - if: runner.os == 'Linux'
         run: make test

@@ -55,7 +55,7 @@ interface SessionSummary extends SessionPdfs {
   sync?: SyncMark // the session's state in the archive
 }
 
-export interface StatusInfo extends Partial<SessionPdfs> {
+export interface StatusInfo {
   model: string
   istfin?: boolean
   context_window: number
@@ -301,6 +301,10 @@ export async function getSession(sessionId: string, opts: ReqOpts = {}) {
   return getJson<SessionPdfs & { turns: SessionEntry[] }>(`/sessions/${encodeURIComponent(sessionId)}`, opts)
 }
 
+export async function getSessionPdfs(sessionId: string, opts: ReqOpts = {}) {
+  return getJson<SessionPdfs>(`/sessions/${encodeURIComponent(sessionId)}/pdfs`, opts)
+}
+
 export async function setSessionPdfs(sessionId: string, enabled: boolean, opts: ReqOpts = {}) {
   return putJson<SessionPdfs>(`/sessions/${encodeURIComponent(sessionId)}/pdfs`, { enabled }, opts)
 }
@@ -352,12 +356,12 @@ export async function getStatus(
   sessionId?: string,
   profile?: string,
   opts: ReqOpts = {},
-): Promise<StatusInfo> {
+): Promise<StatusInfo & SessionPdfs> {
   const q = new URLSearchParams()
   if (sessionId) q.set("session_id", sessionId)
   if (profile) q.set("profile", profile)
   const qs = q.toString()
-  return getJson<StatusInfo>(`/status${qs ? `?${qs}` : ""}`, opts)
+  return getJson<StatusInfo & SessionPdfs>(`/status${qs ? `?${qs}` : ""}`, opts)
 }
 
 /** Switchable backbone profiles + credential availability, for /model. */

@@ -38,6 +38,7 @@ import {
   compact,
   errorText,
   getSession,
+  getSessionPdfs,
   getSettings,
   getStatus,
   getSync,
@@ -121,18 +122,24 @@ function AppInner() {
   let bootDone!: () => void
   const booted = new Promise<void>((resolve) => (bootDone = resolve))
 
-  async function refreshUsage() {
-    // Needs a selected backbone (the status endpoint requires one); skip until then.
-    const profile = activeProfile()
-    if (!profile) return
+  let statusRevision = 0
+  async function readStatus() {
+    const revision = ++statusRevision
     const id = sessionId()
-    // No session yet: the server returns what the first request will carry, and the real window,
-    // so the rail meter shows from the start.
-    try {
-      const status = await getStatus(id, profile)
-      if (id !== sessionId() || profile !== activeProfile()) return
+    const profile = activeProfile()
+    const status = await getStatus(id, profile)
+    if (revision === statusRevision && id === sessionId() && profile === activeProfile()) {
       setUsage(status)
+      setPdfs({ pdfs_enabled: status.pdfs_enabled, pdfs_private: status.pdfs_private })
       setPdfSessionWithIstfin(status.istfin ? id : undefined)
+    }
+    return status
+  }
+
+  async function refreshUsage() {
+    if (!activeProfile()) return
+    try {
+      await readStatus()
     } catch {
       /* meter is best-effort */
     }
@@ -263,8 +270,20 @@ function AppInner() {
     ))
   }
 
-  function choosePdfAccess() {
+  async function choosePdfAccess() {
     if (running()) return
+    const id = sessionId()
+    if (id) {
+      try {
+        const current = await getSessionPdfs(id)
+        if (sessionId() !== id || running() || dialog.open()) return
+        ++statusRevision // an older status reply must not undo this read
+        setPdfs(current)
+      } catch (e) {
+        if (sessionId() === id) notify(`Couldn't read PDF access: ${errorText(e)}`)
+        return
+      }
+    }
     const enable = !pdfs().pdfs_enabled
     dialog.show(() => (
       <ListDialog
@@ -282,7 +301,7 @@ function AppInner() {
         onCancel={() => dialog.close()}
         onSelect={(choice) => {
           dialog.close()
-          if (choice === "change") void changePdfAccess(enable)
+          if (choice === "change" && id === sessionId()) void changePdfAccess(enable)
         }}
       />
     ))
@@ -294,6 +313,7 @@ function AppInner() {
     try {
       const id = sessionId() ?? (await newSessionId())
       const next = await setSessionPdfs(id, enabled)
+      ++statusRevision
       setSessionId(id)
       setPdfs(next)
       notify(next.pdfs_enabled ? "PDFs on. Sync is off for this session." : "PDFs off. Sync stays off.")
@@ -380,7 +400,7 @@ function AppInner() {
 
   // Session status: the model and the context usage of the active session.
   function showStatus() {
-    return load("Session status", getStatus(sessionId(), activeProfile()), (st) =>
+    return load("Session status", readStatus(), (st) =>
       info("Session status", [
         `Model:    ${backbone()?.model ?? st.model}`,
         `Context:  ${st.used_pct}%  (${tokensK(st.tokens_used)} / ${tokensK(st.context_window)})`,

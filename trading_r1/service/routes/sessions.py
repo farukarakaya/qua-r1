@@ -82,6 +82,12 @@ def _pdf_state(session_id: str | None) -> dict[str, bool]:
     }
 
 
+@router.get("/sessions/{session_id}/pdfs")
+def session_pdfs(session_id: str = Path(pattern=f"^{SESSION_ID_PATTERN}$")) -> dict[str, bool]:
+    """Read the current PDF setting without replaying the transcript or loading a model."""
+    return _pdf_state(session_id)
+
+
 class SessionPdfsRequest(BaseModel):
     enabled: bool
 

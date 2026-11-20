@@ -60,6 +60,7 @@ from trading_r1.runtime.session.recorder import Recording
 from trading_r1.runtime.session.records import Entry
 from trading_r1.state.fileio import MISSING, PrivateFileError, read_private_json, write_json
 from trading_r1.state.paths import state_dir
+from trading_r1.state.session_documents import reset_pdfs_on_delete
 
 _log = logging.getLogger(__name__)
 
@@ -478,6 +479,7 @@ class SessionStore:
     def delete(self, session_id: str) -> None:
         """Remove a session: its log and its index row. A session that is not there is a no-op."""
         path = self._log(session_id)
+        reset_pdfs_on_delete(path)
         self._checkpoint_path(session_id).unlink(missing_ok=True)
         path.unlink(missing_ok=True)
         records.forget(path)

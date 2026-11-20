@@ -40,8 +40,13 @@ def pdfs_enabled(directory: Path, session_id: str | None) -> bool:
 
 def set_pdfs_enabled(directory: Path, session_id: str, enabled: bool) -> None:
     # Turning off an ordinary session that's never used PDFs must not exclude it from sync.
-    # Never remove an exclusion when turning access off or deleting the transcript.
     if enabled or pdf_sync_excluded(directory, session_id):
         atomic_write_text(
             _path(directory, session_id), "true\n" if enabled else "false\n", durable=True
         )
+
+
+def reset_pdfs_on_delete(log: Path) -> None:
+    """Revoke access before discarding the transcript, but keep its upload exclusion."""
+    if log.exists() or _path(log.parent, log.stem).exists():
+        set_pdfs_enabled(log.parent, log.stem, False)

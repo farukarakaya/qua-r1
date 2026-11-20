@@ -424,19 +424,42 @@ class DocumentResearchTests(unittest.IsolatedAsyncioTestCase):
             await archive_sync.push_now()
             self.assertEqual(len(uploaded), 1)
 
+    async def test_reused_id_after_delete_requires_new_pdf_opt_in_and_stays_private(self):
+        self.enterContext(patch.dict(os.environ, {"TR1_API_AUTH": "off"}))
+        sid = "reused-id"
+        path = f"/sessions/{sid}"
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app()), base_url="http://localhost"
+        ) as api:
+            (await api.put(f"{path}/pdfs", json={"enabled": True})).raise_for_status()
+            self.sessions.begin(sid, "Old question", {})
+            (await api.delete(path)).raise_for_status()
+            self.assertFalse(self.sessions.exists(sid))
+
+            self.sessions.begin(sid, "New question", {})
+            saved = (await api.get(path)).json()
+            self.assertEqual([turn["question"] for turn in saved["turns"]], ["New question"])
+            self.assertFalse(saved["pdfs_enabled"])
+            self.assertTrue(saved["pdfs_private"])
+            self.assertFalse(self.sync.enrol(sid))
+
     async def test_pdf_defaults_validation_and_active_turn(self):
         self.enterContext(patch.dict(os.environ, {"TR1_API_AUTH": "off"}))
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=create_app()), base_url="http://localhost"
         ) as api:
             path = "/sessions/docs-legacy"
-            self.assertTrue((await api.get(path)).json()["pdfs_enabled"])
+            self.assertEqual(
+                (await api.get(f"{path}/pdfs")).json(), {"pdfs_enabled": True, "pdfs_private": True}
+            )
             async with state.session_lock("docs-legacy"):
                 response = await api.put(f"{path}/pdfs", json={"enabled": False})
                 self.assertEqual(response.status_code, 409)
             await api.put(f"{path}/pdfs", json={"enabled": False})
-            self.assertFalse((await api.get(path)).json()["pdfs_enabled"])
-            self.assertTrue((await api.get(path)).json()["pdfs_private"])
+            self.assertEqual(
+                (await api.get(f"{path}/pdfs")).json(),
+                {"pdfs_enabled": False, "pdfs_private": True},
+            )
             ordinary = await api.put("/sessions/ordinary/pdfs", json={"enabled": False})
             self.assertEqual(ordinary.json(), {"pdfs_enabled": False, "pdfs_private": False})
             invalid = await api.put("/sessions/INVALID/pdfs", json={"enabled": True})
