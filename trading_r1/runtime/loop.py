@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from trading_r1.contract import events
 from trading_r1.providers.base import AssistantTurn, tool_arguments
+from trading_r1.runtime.checkpoint import DecisionCheckpoint, DecisionNotes
 from trading_r1.runtime.context_budget import estimate_tokens, schema_tokens
 from trading_r1.runtime.dispatch import DispatchResult, dispatch_json_args
 from trading_r1.runtime.model_call import CONTEXT_FULL, ContextFull, Purpose, Trimmed, WrapUpDue
@@ -96,6 +97,13 @@ class Run:
         self.registry = registry
         self.session_state = session_state
         self.emit = emit
+        self.recording = recorder.current()
+        self.checkpoint = self.recording.load_checkpoint() if self.recording else None
+
+    def model_messages(self) -> list[dict[str, Any]]:
+        if self.checkpoint is None:
+            return self.state.messages
+        return self.checkpoint.project(self.state.messages, current_run=self.session_state.run)
 
     def send(self, event: events.Event) -> None:
         events.send(self.emit, event)
@@ -134,7 +142,7 @@ class Run:
         as /status counts it."""
         caller = self.agent.caller
         window = caller.window
-        used = estimate_tokens(self.state.messages) + schema_tokens(
+        used = estimate_tokens(self.model_messages()) + schema_tokens(
             self.session_state.visible_schemas(self.registry)
         )
         self.send(
@@ -177,7 +185,7 @@ class Run:
         state = self.state
         try:
             turn = await self.agent.caller.turn(
-                state.messages,
+                self.model_messages(),
                 self.session_state.visible_schemas(self.registry),
                 on_delta=self._on_delta(),
                 deadline=state.wrap_up_at,
@@ -207,10 +215,27 @@ class Run:
     async def tool_step(self, turn: AssistantTurn) -> None:
         """Dispatch the message's calls and append their results."""
         state = self.state
+        notes = (
+            self.checkpoint.notes
+            if self.checkpoint and self.checkpoint.run == self.session_state.run
+            else None
+        )
         for tc in turn.tool_calls:
             result = await self._execute(tc)
-            state.messages.append(result.to_message(tc.id))
+            message = result.to_message(tc.id)
+            if result.ok and tc.name == "update_plan" and result.args.get("decision") is not None:
+                notes = DecisionNotes.model_validate(result.args["decision"])
+            if result.ok and tc.name == "evidence" and (id_ := result.args.get("id")):
+                path = result.args.get("path")
+                message["_pointer"] = f"[Evidence read: {id_}{'.' + path if path else ''}]"
+            state.messages.append(message)
             state.tool_log.append(result.to_log())
+        if notes is not None:
+            self.checkpoint = DecisionCheckpoint.commit(
+                notes, self.session_state.evidence, run=self.session_state.run, round_=state.rounds
+            )
+            if self.recording is not None:
+                self.recording.save_checkpoint(self.checkpoint)
 
     async def _execute(self, tc: Any) -> DispatchResult:
         """Dispatch one tool call, with its call and result events."""
@@ -287,7 +312,7 @@ class Run:
                     state.messages.append({"role": "user", "content": "Write the report now."})
                 try:
                     turn = await self.agent.caller.turn(
-                        state.messages,
+                        self.model_messages(),
                         None if last else self.session_state.visible_schemas(self.registry),
                         purpose=Purpose.OPTIONAL,
                     )
@@ -319,7 +344,9 @@ class Run:
         review = f"{GROUNDING_REVIEW_PROMPT}\n\n---\n\n{draft}"
         try:
             response = await self.agent.caller.turn(
-                [*messages, {"role": "user", "content": review}], None, purpose=Purpose.OPTIONAL
+                [*self.model_messages(), {"role": "user", "content": review}],
+                None,
+                purpose=Purpose.OPTIONAL,
             )
         except Exception:  # noqa: BLE001 (best-effort; keep the draft)
             return None
@@ -344,7 +371,7 @@ class Run:
         prompt = harness_note(WRAP_UP_PROMPT)
         try:
             response = await self.agent.caller.turn(
-                [*state.messages, prompt], None, purpose=Purpose.FINAL, keep_recent=0
+                [*self.model_messages(), prompt], None, purpose=Purpose.FINAL, keep_recent=0
             )
         except Exception:  # noqa: BLE001 (best-effort)
             _LOG.warning("wrap-up call failed; the run ends at its %s", at.value, exc_info=True)
