@@ -15,6 +15,8 @@ from trading_r1.contract.units import Code, Fraction, Money
 
 
 class SaleBasis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     reason: Literal["thesis_break", "mandate_change", "review_only", "payout_cut_only"]
     original_thesis: str = ""
     contrary_filing: str = ""
@@ -34,7 +36,7 @@ class ReviewRequest(BaseModel):
     sale_basis: dict[str, SaleBasis] = Field(default_factory=dict)
 
 
-class Scenario(BaseModel):
+class Scenario(Output):
     status: Code
     external_cash: Money
     buys: Money
