@@ -81,9 +81,27 @@ class BistSectorsTests(unittest.IsolatedAsyncioTestCase):
             )
         ).payload
         self.assertEqual(out["n_bars"], 3)  # partial middle week kept on shared Jan 6
-        self.assertEqual(out["n_fx_returns"], 3)  # four shared daily closes
+        self.assertEqual(out["n_fx_returns"], 2)  # Jan 6 to Jan 13 skips a benchmark session
         self.assertAlmostEqual(out["sectors"][0]["fx_beta"], 1)
         self.assertAlmostEqual(out["benchmark"]["usd_max_drawdown"], 9 / 11 - 1)
+
+    async def test_beta_excludes_return_spanning_missing_session(self):
+        self.fx[:] = [10, 11, 22, 11, 11]
+        self.paths["XIST:XBANK"] = [100, 110, 180, 220, 220]
+        original = self.bars
+
+        async def missing_close(symbol, *args):
+            bars = await original(symbol, *args)
+            if symbol == "XIST:XUTEK":
+                bars.rows[:] = [r for r in bars.rows if r["date"] != _DATES[2]]
+            return bars
+
+        self.fetched.side_effect = missing_close
+        out = (await tool.SPEC.handler(tool.BistSectorsRequest(sectors=["XBANK", "XUTEK"]))).payload
+        bank = next(s for s in out["sectors"] if s["symbol"] == "XIST:XBANK")
+        self.assertEqual((out["n_bars"], out["n_fx_returns"]), (4, 2))
+        self.assertAlmostEqual(bank["fx_beta"], 1)  # +10% and flat for both bank and FX
+        self.assertAlmostEqual(bank["usd_return"], 1)  # full window still includes the gap
 
     async def test_flat_fx_has_undefined_beta(self):
         self.fx[:] = [10] * len(_DATES)

@@ -22,9 +22,9 @@ _INDICATORS = {
     "reer_cpi": ("TP.RK.T1.Y", "index (2025=100)"),
     "gross_fx_reserves_usd_m": ("TP.AB.C2", "USD millions"),
     "try_deposit_3m": ("TP.TRY.MT02", "%"),
-    "try_commercial_loan": ("TP.KTF10", "%"),
+    "try_commercial_loan": ("TP.KTF17", "%"),
 }
-_BUCKETS = {"1-3y": (1, 3, 2), "3-7y": (3, 7, 5), "7y+": (7, float("inf"), 10)}
+_BUCKETS = {"1-3y": (1, 3, 2), "3-7y": (3, 7, 5), "7y+": (7, None, 10)}
 EvdsCode = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9._-]+$")]
 
 
@@ -178,7 +178,9 @@ def _eurobonds(frame: Any, today: dt.date) -> dict[str, Eurobond]:
             )
     buckets = {}
     for name, (low, high, target) in _BUCKETS.items():
-        candidates = (bond for bond in bonds if low <= bond.years_to_maturity < high)
+        start = months_back(today, -12 * low).isoformat()
+        end = months_back(today, -12 * high).isoformat() if high is not None else None
+        candidates = (b for b in bonds if start <= b.maturity and (end is None or b.maturity < end))
         if best := min(
             candidates, key=lambda b: (abs(b.years_to_maturity - target), b.isin), default=None
         ):

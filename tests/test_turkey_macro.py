@@ -16,7 +16,7 @@ from trading_r1.tools.data import bist
 from trading_r1.tools.data.macro import turkey
 
 _TODAY = dt.date(2026, 11, 20)
-_CODES = ["TP.APIFON4", "TP.RK.T1.Y", "TP.AB.C2", "TP.TRY.MT02", "TP.KTF10"]
+_CODES = ["TP.APIFON4", "TP.RK.T1.Y", "TP.AB.C2", "TP.TRY.MT02", "TP.KTF17"]
 
 
 class TurkeyMacroTests(unittest.IsolatedAsyncioTestCase):
@@ -49,7 +49,7 @@ class TurkeyMacroTests(unittest.IsolatedAsyncioTestCase):
                 "TP.RK.T1.Y": [math.nan, math.nan, 107.76, 103.2],
                 "TP.AB.C2": [58136, 40000, 56000, 57000],
                 "TP.TRY.MT02": [42.22, 46, 43, 45],
-                "TP.KTF10": [59.61, 65, 60, 61],
+                "TP.KTF17": [47.5, 55, 48, 50],
                 "TP.CUSTOM-1": ["100", "50", None, "80"],
             },
             index=pd.to_datetime(["2026-11-01", "2025-11-01", "2026-10-01", "2026-08-01"]),
@@ -87,6 +87,26 @@ class TurkeyMacroTests(unittest.IsolatedAsyncioTestCase):
         self.cpi.assert_called_once_with(limit=12)
         self.bonds.assert_called_once_with(currency="USD")
 
+    def test_eurobond_buckets_use_calendar_anniversaries(self):
+        today = dt.date(2024, 2, 29)
+        for maturity, expected in [
+            ("2025-02-27", None),
+            ("2025-02-28", "1-3y"),
+            ("2027-02-27", "1-3y"),
+            ("2027-02-28", "3-7y"),
+            ("2031-02-27", "3-7y"),
+            ("2031-02-28", "7y+"),
+        ]:
+            with self.subTest(maturity=maturity):
+                frame = pd.DataFrame(
+                    [("US900123AA02", maturity, 5)], columns=["isin", "maturity", "ask_yield"]
+                )
+                if expected is None:
+                    with self.assertRaisesRegex(ToolError, "no usable USD sovereign Eurobond"):
+                        turkey._eurobonds(frame, today)
+                else:
+                    self.assertEqual(list(turkey._eurobonds(frame, today)), [expected])
+
     async def test_batched_evds_series_and_real_rates(self):
         self.overlay.return_value = {"EVDS_API_KEY": "  example-key  "}
         with patch.dict(os.environ, clear=True):
@@ -113,6 +133,8 @@ class TurkeyMacroTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(out["inflation"]["observations"]), 5)
         self.assertAlmostEqual(out["real_funding_rate"], 6.23)
         self.assertAlmostEqual(out["real_deposit_rate"], 12.45)
+        commercial = out["evds"]["try_commercial_loan"]
+        self.assertEqual((commercial["code"], commercial["value"]), ("TP.KTF17", 47.5))
         self.assertEqual(out["evds"]["funding_rate"]["change_3m"], -1)
         self.assertEqual(out["evds"]["funding_rate"]["change_12m"], -14)
         self.assertEqual(out["evds"]["reer_cpi"]["date"], "2026-10-01")

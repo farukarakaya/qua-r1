@@ -16,7 +16,6 @@ from trading_r1.contract.spec import Output, Provenance, Result, ToolError, Tool
 from trading_r1.contract.units import Code, Count, Day, Fraction, Number, Text
 from trading_r1.tools.compute.risk.drawdown import max_drawdown
 from trading_r1.tools.compute.risk.volatility import realized_vol
-from trading_r1.tools.compute.series import pct_returns
 from trading_r1.tools.data.market.aligned_prices import align
 from trading_r1.tools.data.pricing import EQUITY, PriceWindow, fetch_bars
 
@@ -132,7 +131,16 @@ async def _handler(req: BistSectorsRequest) -> Result:
         raise ToolError(f"Fewer than two shared {req.interval} bars. Widen the window.{available}")
     first, last = sampled[0], sampled[-1]
     fx = prices[FX]
-    fx_returns = pct_returns(fx[first : last + 1])
+    # A missing sector or FX close must not turn a multi-session move into a daily return.
+    sessions = {d: i for i, d in enumerate(sorted({r["date"] for r in rows[BENCHMARK]}))}
+    daily_ends = [
+        i for i in range(first + 1, last + 1) if sessions[dates[i]] == sessions[dates[i - 1]] + 1
+    ]
+
+    def daily_returns(levels: list[float]) -> list[float]:
+        return [levels[i] / levels[i - 1] - 1 for i in daily_ends]
+
+    fx_returns = daily_returns(fx)
     fx_variance = statistics.variance(fx_returns) if len(fx_returns) >= 2 else 0.0
     benchmark_usd = (prices[BENCHMARK][last] / fx[last]) / (
         prices[BENCHMARK][first] / fx[first]
@@ -145,8 +153,7 @@ async def _handler(req: BistSectorsRequest) -> Result:
         usd_return = usd[-1] / usd[0] - 1
         beta = None
         if fx_variance:
-            daily_try_returns = pct_returns(levels[first : last + 1])
-            beta = statistics.covariance(daily_try_returns, fx_returns) / fx_variance
+            beta = statistics.covariance(daily_returns(levels), fx_returns) / fx_variance
         return BistSector(
             symbol=symbol,
             sector=label,
@@ -195,7 +202,7 @@ SPEC = ToolSpec(
         "BIST sector indices ranked by USD price return, with TRY return, USD excess return "
         "against BIST 100, USD volatility, USD drawdown and empirical FX beta versus USDTRY. "
         "Returns exclude cash dividends; all successful indices and FX share dates. FX beta "
-        "uses daily TRY and USDTRY returns even if you request weekly or monthly bars. "
+        "uses only consecutive XU100 sessions, even for weekly or monthly bars. "
         "Defaults to one year of daily bars and all 16 sectors."
     ),
     request_schema=BistSectorsRequest,
