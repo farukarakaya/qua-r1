@@ -96,3 +96,19 @@ class PortfolioReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome.payload["first_stage"]["status"], "funded")
         self.assertAlmostEqual(outcome.payload["first_stage"]["closing_cash"], 5.80)
         self.assertEqual(outcome.payload["full_target"]["status"], "unfunded")
+
+    async def test_sale_basis_rejects_unknown_fields(self):
+        outcome = await dispatch(
+            "compute_portfolio_review",
+            {
+                "holdings": {"OPERATING": 500},
+                "opening_cash": 0,
+                "commission_rate": 0,
+                "spread_rate": 0,
+                "stage_trades": {},
+                "full_trades": {"OPERATING": -100},
+                "sale_basis": {"OPERATING": {"reason": "thesis_break", "thesis": "Typo"}},
+            },
+            registry=catalog_tool_registry(),
+        )
+        self.assertFalse(outcome.ok)
