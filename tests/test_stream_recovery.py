@@ -10,7 +10,7 @@ import httpx
 from openai import APIError, AuthenticationError
 
 from trading_r1.assembly import catalog_tool_registry
-from trading_r1.providers.openai import OpenAIProvider
+from trading_r1.providers.openai import OpenAIProvider, _turn_from_response
 from trading_r1.providers.profiles import ModelProfile
 from trading_r1.runtime.agent import Agent
 from trading_r1.runtime.recovery import BACKOFF, FATAL, classify_model_error
@@ -58,6 +58,18 @@ class StreamRecoveryTests(unittest.IsolatedAsyncioTestCase):
             _BROKEN, response=httpx.Response(401, request=_REQUEST), body=None
         )
         self.assertEqual(classify_model_error(auth, provider), FATAL)
+
+    def test_terminal_incomplete_response_discards_unfinished_tool_item(self):
+        response = SimpleNamespace(
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            output=[SimpleNamespace(type="function_call", arguments='{"expr')],
+            output_text="",
+        )
+        turn = _turn_from_response(_PROFILE, response)
+        self.assertEqual(turn.finish_reason, "length")
+        self.assertEqual(turn.tool_calls, [])
+        self.assertFalse(turn.is_actionable)
 
     async def run_fixture(self, failures):
         tool = SimpleNamespace(
