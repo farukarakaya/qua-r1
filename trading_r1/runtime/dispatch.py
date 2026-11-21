@@ -301,7 +301,7 @@ async def _dispatch(
                 payload=payload,
                 meta=meta,
                 output=text,
-                inputs=referenced_ids(coerced),
+                inputs=tuple(dict.fromkeys((*referenced_ids(coerced), *response.inputs))),
                 run=session_state.run,
             )
         evidence_id = rec.id if rec else None

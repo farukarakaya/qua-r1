@@ -43,19 +43,21 @@ or rank candidates, and do not propose weights. A good result can be no eligible
   FX exposure. Missing analyst coverage is not adverse evidence. For the US, do not infer
   past consensus revisions from current estimates. Use optional PDF or IstFin tools only if
   already available in the session.
-- Record a publication field on the item that establishes the change, not its reporting period,
-  file name, quote date, or the day Qua found it. Supported evidence paths include
+- Record a publication field on the evidence item that establishes the change, not its
+  reporting period, file name, quote date, or the day Qua found it. The publication date must
+  come from an evidence item also cited in `evidence`. Supported evidence paths include
   `filings[0].filed`, `disclosure.published_at`, `items[0].published_at` and
   `items[0].published` when `time_basis` is `published`. Use the correct item index.
   If unknown, omit `publication` and leave `early_claim` false. A source date alone does not
   prove the stock was underpriced or that Qua identified it at that time.
-- Use `data_market_quotes` for the candidate's dated price, then `calc` or a valuation tool to
-  solve for one operating assumption. Chain the candidate quote into the calculation with
-  `prev:`. For example, derive market capitalization from price times shares, then divide by
-  an assumed justified P/E to get required earnings. State the units, horizon and fixed
-  assumptions. Compare against a plausible range grounded in filings or peers; don't use
-  a trailing P/E hurdle for a loss-maker. If the inputs do not support a defensible hurdle,
-  leave it unknown.
+- Use `data_market_quotes` for the candidate's dated price on or after the publication date,
+  then `calc` or a valuation tool to solve for one operating assumption. Chain the candidate's
+  own price field (`prev:<id>.quotes.<SYMBOL>.price`) into the calculation with `prev:`. For
+  example, derive market capitalization from price times shares, then divide by an assumed
+  justified P/E to get required earnings. State the units, horizon and fixed assumptions.
+  Compare against a plausible range grounded in filings or peers; don't use a trailing P/E
+  hurdle for a loss-maker. If the inputs or a post-event quote are unavailable, leave the
+  hurdle unknown.
 
 ## 3. Save the decisions and explain the shortlist
 

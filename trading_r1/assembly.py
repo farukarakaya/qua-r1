@@ -105,12 +105,12 @@ def build_run_registry(
     from trading_r1.tools.compute.modeling.sensitivity import build_sensitivity_spec
     from trading_r1.tools.core import (
         build_ask_user_spec,
+        build_discovery_spec,
         build_evidence_spec,
         build_load_skill_spec,
         build_load_tool_spec,
         build_memory_specs,
     )
-    from trading_r1.tools.core.discovery import build_discovery_spec
 
     registry = base.clone()
     registry.register(build_evidence_spec(session_state.evidence))

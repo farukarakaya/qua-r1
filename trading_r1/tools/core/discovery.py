@@ -15,7 +15,12 @@ from pydantic import Field, StringConstraints, model_validator
 
 from trading_r1.contract.spec import Output, Provenance, Result, ToolError, ToolSpec, hint
 from trading_r1.contract.units import Code, Count, Day, Exact, Price, Text
-from trading_r1.runtime.chaining import ChainFailure, resolve_one
+from trading_r1.runtime.chaining import (
+    ChainFailure,
+    embed_references,
+    is_reference,
+    resolve_one,
+)
 from trading_r1.runtime.evidence import EvidenceRecord, EvidenceStore, lineage
 from trading_r1.tools.data.bist import bist_ticker
 from trading_r1.tools.data.common import Symbol
@@ -29,12 +34,14 @@ _Track = Literal["compounder", "cyclical_turn", "supply_chain"]
 _Verdict = Literal["watch", "pass", "eligible"]
 _US_TICKER = re.compile(r"[A-Z][A-Z0-9]*(?:\.[A-Z0-9]+)?")
 _PUBLICATION = {
-    "data_equity_filings": re.compile(r"filings\[[0-9]+\]\.filed"),
-    "data_market_istfin_disclosure": re.compile(r"disclosure\.published_at"),
-    "data_market_istfin_news": re.compile(r"items\[[0-9]+\]\.published_at"),
-    "data_market_news": re.compile(r"items\[[0-9]+\]\.published"),
+    "data_equity_filings": re.compile(r"(filings\[[0-9]+\])\.filed"),
+    "data_market_istfin_disclosure": re.compile(r"(disclosure)\.published_at"),
+    "data_market_istfin_news": re.compile(r"(items\[[0-9]+\])\.published_at"),
+    "data_market_news": re.compile(r"(items\[[0-9]+\])\.published"),
 }
-_NOT_COMPANY_EVIDENCE = {NAME, BIST_SCREEN.name, "search"}
+_NOT_COMPANY_EVIDENCE = {NAME, BIST_SCREEN.name, "search", "search_docs"}
+_CLOCK_SKEW = dt.timedelta(minutes=5)
+_MAX_UTC_OFFSET = dt.timedelta(hours=14)
 
 
 class EvidenceRef(Output):
@@ -126,30 +133,98 @@ def _value(record: EvidenceRecord, ref: EvidenceRef) -> Any:
     return value
 
 
-def _date(value: object, now: dt.datetime) -> bool:
+def _parse_date(value: object) -> tuple[dt.date, dt.datetime | None] | None:
     if not isinstance(value, str):
-        return False
+        return None
     try:
         if len(value) == 10:
-            return dt.date.fromisoformat(value) <= now.date()
+            return dt.date.fromisoformat(value), None
         stamp = dt.datetime.fromisoformat(value)
-        return stamp.tzinfo is not None and stamp <= now
+        if stamp.tzinfo is None:
+            return None
+        utc = stamp.astimezone(dt.UTC)
+        return utc.date(), utc
     except (OverflowError, ValueError):
+        return None
+
+
+def _not_future(value: object, now: dt.datetime) -> bool:
+    parsed = _parse_date(value)
+    if parsed is None:
         return False
+    day, stamp = parsed
+    if stamp is None:
+        return day <= (now + _MAX_UTC_OFFSET).date()
+    return stamp <= now + _CLOCK_SKEW
 
 
-def _publication(ref: EvidenceRef, store: EvidenceStore, now: dt.datetime) -> str:
+def _quote_on_or_after(quote_date: str, published_at: str) -> bool:
+    parsed_quote = _parse_date(quote_date)
+    parsed_pub = _parse_date(published_at)
+    if parsed_quote is None or parsed_pub is None:
+        return False
+    q_day, q_stamp = parsed_quote
+    p_day, p_stamp = parsed_pub
+    if q_stamp is not None and p_stamp is not None:
+        return q_stamp >= p_stamp
+    return q_day >= p_day
+
+
+def _publication(
+    ref: EvidenceRef, evidence: list[EvidenceRef], store: EvidenceStore, now: dt.datetime
+) -> str:
     record = store.get(ref.evidence_id)
-    if not record or not (rule := _PUBLICATION.get(record.tool)) or not rule.fullmatch(ref.path):
+    if (
+        not record
+        or not (rule := _PUBLICATION.get(record.tool))
+        or not (match := rule.fullmatch(ref.path))
+    ):
         raise ToolError("Use a recorded publication date field, not a report or retrieval date.")
+    item = match.group(1)
+    if not any(
+        ev.evidence_id == ref.evidence_id
+        and ev.path != ref.path
+        and (ev.path == item or ev.path.startswith(f"{item}."))
+        for ev in evidence
+    ):
+        raise ToolError("Publication date must come from the same evidence item cited in evidence.")
     if record.tool == "data_market_news":
-        basis = ref.model_copy(update={"path": ref.path.rsplit(".", 1)[0] + ".time_basis"})
+        basis = ref.model_copy(update={"path": f"{item}.time_basis"})
         if _value(record, basis) != "published":
             raise ToolError("First-seen news time is not a publication time.")
     published = _value(record, ref)
-    if not _date(published, now):
+    if not _not_future(published, now):
         raise ToolError("Publication date is missing, invalid or in the future.")
     return published
+
+
+def _iter_refs(node: Any) -> Iterable[str]:
+    if isinstance(node, str) and is_reference(stripped := node.strip()):
+        yield stripped
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _iter_refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _iter_refs(value)
+
+
+def _uses_quote_price(calc_id: str, quote_id: str, symbol: str, store: EvidenceStore) -> bool:
+    target = f"prev:{quote_id}.quotes.{symbol}.price"
+    for node in lineage(calc_id, store.all()).nodes:
+        if node.id == quote_id:
+            continue
+        rec = store.get(node.id)
+        if rec is None:
+            continue
+        args = (
+            embed_references(rec.args, "expression", "values")[0]
+            if rec.tool == "calc"
+            else rec.args
+        )
+        if any(ref == target for ref in _iter_refs(args)):
+            return True
+    return False
 
 
 def _valuation(
@@ -160,22 +235,27 @@ def _valuation(
         raise ToolError("Price hurdle needs a recorded quote for the candidate.")
     quote = record.payload.get("quotes", {}).get(symbol, {})
     price, currency = quote.get("price"), quote.get("currency")
-    date = quote.get("as_of") or quote.get("session_date")
+    date = next(
+        (d for d in (quote.get("as_of"), quote.get("session_date")) if _not_future(d, now)),
+        None,
+    )
     if (
         isinstance(price, bool)
         or not isinstance(price, int | float)
         or not math.isfinite(price)
         or price <= 0
         or not currency
-        or not _date(date, now)
+        or date is None
     ):
         raise ToolError(f"Price hurdle needs a dated, positive quote and currency for {symbol}.")
     ref = hurdle.calculation
     calc = store.get(ref.evidence_id)
     if not calc or (calc.tool != "calc" and not calc.tool.startswith("compute_valuation_")):
         raise ToolError("Price hurdle must point to a calculation result.")
-    if not any(node.id == record.id for node in lineage(calc.id, store.all()).nodes):
-        raise ToolError("Chain the quote into the price hurdle calculation using prev:.")
+    if not _uses_quote_price(calc.id, record.id, symbol, store):
+        raise ToolError(
+            f"Chain the quote price for {symbol} into the price hurdle calculation using prev:."
+        )
     implied = _value(calc, ref)
     if (
         isinstance(implied, bool)
@@ -186,16 +266,23 @@ def _valuation(
     return Valuation(price=price, currency=currency, quote_date=date, implied=implied)
 
 
-def _bist_coverage(records: Iterable[EvidenceRecord], capture_id: str) -> tuple[int, set[str], str]:
+def _bist_coverage(
+    records: Iterable[EvidenceRecord], capture_id: str
+) -> tuple[int, set[str], str, list[str]]:
     pages = [
-        r.payload
+        r
         for r in records
         if r.tool == BIST_SCREEN.name and r.payload.get("capture_id") == capture_id
     ]
     if not pages:
         raise ToolError("No such BIST screen capture in this session. Run a screen first.")
-    returned = {row["symbol"] for page in pages for row in page["rows"]}
-    return int(pages[0]["total_matched"]), returned, pages[0]["captured_at"]
+    returned = {row["symbol"] for r in pages for row in r.payload["rows"]}
+    return (
+        int(pages[0].payload["total_matched"]),
+        returned,
+        pages[0].payload["captured_at"],
+        [r.id for r in pages],
+    )
 
 
 def _save(decision: Decision, symbol: str, store: EvidenceStore, now: dt.datetime) -> SavedDecision:
@@ -208,12 +295,25 @@ def _save(decision: Decision, symbol: str, store: EvidenceStore, now: dt.datetim
                 "Use company or industry evidence, not a screen, search or prior verdict."
             )
         _value(record, ref)
-    published = _publication(decision.publication, store, now) if decision.publication else None
+    published = (
+        _publication(decision.publication, decision.evidence, store, now)
+        if decision.publication
+        else None
+    )
     if decision.early_claim and published is None:
         raise ToolError("An early discovery claim needs a recorded publication date.")
     valuation = (
         _valuation(symbol, decision.price_hurdle, store, now) if decision.price_hurdle else None
     )
+    if (
+        published is not None
+        and valuation is not None
+        and not _quote_on_or_after(valuation.quote_date, published)
+    ):
+        raise ToolError(
+            "Price hurdle quote predates the publication date. "
+            "Use watch until a post-event quote is recorded."
+        )
     if decision.verdict == "eligible" and (published is None or valuation is None):
         raise ToolError(
             "Eligibility needs a publication date and price hurdle. Use watch if unknown."
@@ -229,13 +329,13 @@ def build_discovery_spec(store: EvidenceStore) -> ToolSpec:
         universe = sorted(req.us_universe or [])
         capture_id = req.capture_id
         if capture_id:
-            matched, returned, captured_at = _bist_coverage(records, capture_id)
+            matched, returned, captured_at, page_ids = _bist_coverage(records, capture_id)
         else:
             if len(set(universe)) != len(universe) or any(
-                not _US_TICKER.fullmatch(s) or bist_ticker(s) for s in universe
+                not _US_TICKER.fullmatch(s) or s.endswith(".IS") for s in universe
             ):
                 raise ToolError("Use a distinct list of plain US equity tickers such as BRK.B.")
-            matched, returned, captured_at = len(universe), set(universe), None
+            matched, returned, captured_at, page_ids = len(universe), set(universe), None, []
 
         latest = {
             decision["symbol"]: decision["verdict"]
@@ -247,6 +347,7 @@ def build_discovery_spec(store: EvidenceStore) -> ToolSpec:
         }
         saved = []
         seen = set()
+        deps = list(page_ids)
         now = dt.datetime.now(dt.UTC)
         for decision in req.decisions:
             symbol = decision.symbol
@@ -261,6 +362,16 @@ def build_discovery_spec(store: EvidenceStore) -> ToolSpec:
             seen.add(symbol)
             saved.append(_save(decision, symbol, store, now))
             latest[symbol] = decision.verdict
+            deps.extend(ref.evidence_id for ref in decision.evidence)
+            if decision.publication:
+                deps.append(decision.publication.evidence_id)
+            if decision.price_hurdle:
+                deps.extend(
+                    (
+                        decision.price_hurdle.quote_evidence,
+                        decision.price_hurdle.calculation.evidence_id,
+                    )
+                )
 
         verdicts = list(latest.values())
         return Result(
@@ -281,6 +392,7 @@ def build_discovery_spec(store: EvidenceStore) -> ToolSpec:
                 note=None if capture_id else "US coverage is limited to the supplied list.",
             ),
             Provenance(method="Discovery judgments, not verified market facts"),
+            inputs=tuple(dict.fromkeys(deps)),
         )
 
     return ToolSpec(
