@@ -11,7 +11,10 @@ the prompt variant, not the toolset.
 
 from __future__ import annotations
 
+import os
+import subprocess
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from trading_r1.assembly import build_tool_registry, default_skill_registry, run_binder
@@ -30,6 +33,47 @@ from trading_r1.state.runtime_config import RuntimeConfig, load_runtime_config
 from trading_r1.tools.data.market.bist_screen import screen_capture_scope
 from trading_r1.tools.web import FetchCache, citation_finalizer
 from trading_r1.tools.web.cache import Citation
+
+
+def _checkout_revision(root: Path) -> tuple[str, bool | None]:
+    """Read the source checkout's HEAD and dirty state without searching parent repos."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+    def git(*args: str) -> bytes:
+        return subprocess.check_output(
+            ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", str(root), *args],
+            env=env,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        )
+
+    try:
+        if not (root / ".git").exists():  # linked worktrees have a file here
+            return "unknown", None
+        # A package installed directly in an unrelated Git root is not tracked at its HEAD.
+        top, sha, _ = os.fsdecode(
+            git(
+                "rev-parse",
+                "--show-toplevel",
+                "--revs-only",
+                "HEAD^{commit}",
+                "HEAD:trading_r1/research.py",
+                "--",
+            )
+        ).splitlines()
+        if Path(top) != root:
+            return "unknown", None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return "unknown", None
+    try:
+        dirty = bool(git("status", "--porcelain=v1", "--untracked-files=normal"))
+    except (OSError, subprocess.SubprocessError):
+        dirty = None
+    return sha, dirty
+
+
+# Capture once when the backend imports this module, not when each turn begins.
+_GIT_SHA, _GIT_DIRTY = _checkout_revision(Path(__file__).resolve().parent.parent)
 
 
 async def run_research(
@@ -148,6 +192,8 @@ async def run_logged(
         "model": profile.model,
         "mode": resolve_mode(mode),
         "version": __version__,
+        "git_sha": _GIT_SHA,
+        "git_dirty": _GIT_DIRTY,
     }
 
     def start() -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, TurnRecorder]:

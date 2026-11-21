@@ -35,6 +35,7 @@ class LoadSkillRequest(BaseModel):
 
 class LoadedSkill(BaseModel):
     name: Code
+    sha256: Code
     tools_loaded: list[Code] = []  # its required tools, callable now
     recipe: Text  # the SKILL.md body to follow
 
@@ -72,7 +73,9 @@ def build_load_skill_spec(
                 if known:
                     tool_state.load(known, tool_registry)
                     auto = known
-            skills.append(LoadedSkill(name=name, tools_loaded=auto, recipe=spec.body))
+            skills.append(
+                LoadedSkill(name=name, sha256=spec.sha256, tools_loaded=auto, recipe=spec.body)
+            )
             loaded.append(name)
         available = list(skill_registry.names()) if unknown else []
         return Result(
