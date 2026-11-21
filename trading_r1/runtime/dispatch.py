@@ -312,10 +312,10 @@ async def _dispatch(
             args=args,
             ok=True,
             validated_args=validated,
-            # a control's text stands alone; a fact opens with where it comes from
+            # Controls without evidence stand alone; saved decisions need a record id too.
             text=(
                 text
-                if spec.result_kind == "control"
+                if spec.result_kind == "control" and evidence_id is None
                 else f"{_header(spec, meta, evidence_id)}\n{text}"
             ),
             result_kind=spec.result_kind,
