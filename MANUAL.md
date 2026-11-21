@@ -154,6 +154,12 @@ are not confirmed earnings release dates. The Tauric equity tools direct qualifi
 requests to the BIST tools instead of querying Tauric.
 
 Use `data.market.bist_screen` to rank the full BIST screening universe (or specify an index).
+Pass a non-null `next_cursor` as `cursor` within the same research turn to read the next unseen
+page from that capture. The filters, sort and page size stay fixed. `returned_total` counts
+unique rows already returned; `unseen` counts remaining matches, not rejected companies.
+`captured_at` is when Qua captured the result, not the upstream data date. A cursor can expire
+after newer captures or when the turn ends. To start a new screen, omit the cursor.
+
 Market cap and 3-month average volume are in USD millions. Net margin and net income growth
 are forecasts, so verify them before relying on them. A failed filter or sort metric fails the
 screen. Failed display-only requests are listed under `unavailable_metrics`.

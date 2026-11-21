@@ -27,6 +27,7 @@ from trading_r1.runtime.session import recorder
 from trading_r1.runtime.session.store import SessionStore, TurnRecorder
 from trading_r1.runtime.sources import source_scope
 from trading_r1.state.runtime_config import RuntimeConfig, load_runtime_config
+from trading_r1.tools.data.market.bist_screen import screen_capture_scope
 from trading_r1.tools.web import FetchCache, citation_finalizer
 from trading_r1.tools.web.cache import Citation
 
@@ -109,7 +110,7 @@ async def run_research(
         policy=policy,
         delivery=delivery,
     )
-    with source_scope(cache):
+    with source_scope(cache), screen_capture_scope():
         traj = await agent.run(
             question, on_event=on_event, history=history, reference_data=document_context
         )

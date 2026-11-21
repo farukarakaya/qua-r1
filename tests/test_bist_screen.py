@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import datetime as dt
 import json
+import os
+import tempfile
 import unittest
 from threading import Barrier
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 from borsapy.cache import Cache
@@ -12,7 +15,12 @@ from pydantic import ValidationError
 
 from trading_r1.assembly import catalog_tool_registry
 from trading_r1.contract.spec import ToolError
-from trading_r1.tools.data.market.bist_screen import SPEC, BistScreenRequest
+from trading_r1.providers import ModelProfile
+from trading_r1.providers.base import AssistantTurn, ToolCall
+from trading_r1.research import run_research
+from trading_r1.state.runtime_config import RuntimeConfig
+from trading_r1.tools.data.market import bist_screen
+from trading_r1.tools.data.market.bist_screen import SPEC, BistScreenRequest, screen_capture_scope
 
 # Raw getScreenerDataNEW columns. The similarly named IDs from the criteria picker
 # are intentionally present as distractors; neither criteria_8 (TRY cap) nor 60 is USD cap.
@@ -214,8 +222,10 @@ class BistScreenTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_screen_is_not_an_error(self):
         no_matches = await SPEC.handler(BistScreenRequest(market_cap_usd_max=1))
         self.assertEqual(no_matches.payload["rows"], [])
-        self.assertEqual(no_matches.payload["total_matched"], 0)
+        for key in ("total_matched", "returned", "returned_total", "unseen"):
+            self.assertEqual(no_matches.payload[key], 0)
         self.assertFalse(no_matches.payload["truncated"])
+        self.assertIsNone(no_matches.payload["next_cursor"])
         self.responses["9"] = {"d": "[]"}
         empty = await SPEC.handler(BistScreenRequest(recommendation="AL"))
         self.assertEqual(empty.payload["rows"], [])
@@ -277,3 +287,120 @@ class BistScreenTests(unittest.IsolatedAsyncioTestCase):
             BistScreenRequest(ev_ebitda_min=8, ev_ebitda_max=4)
         with self.assertRaises(ValidationError):
             BistScreenRequest(avg_volume_3m_usd_min=float("inf"))
+
+
+class BistScreenPaginationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Unsorted input, tied ranks and one missing P/E exercise stable ordering across pages.
+        self.rows = [
+            {
+                "symbol": f"XIST:T{i:03}",
+                "name": f"Fixture {i}",
+                "market_cap_usd": 100,
+                "pe": None if i == 63 else 1 + i // 7,
+            }
+            for i in reversed(range(64))
+        ]
+        self.fetch = self.enterContext(
+            patch.object(bist_screen.bist, "screen_stocks", return_value=(self.rows, ["roe"]))
+        )
+
+    async def test_one_run_pages_frozen_rows_and_does_not_count_retries_twice(self):
+        self.fetch.side_effect = [(self.rows, ["roe"]), ToolError("Provider went offline.")]
+        requests = [
+            ("load_tool", {"tools": [SPEC.name]}),
+            (SPEC.name, {"limit": 18, "sort_by": "pe", "market_cap_usd_min": 30}),
+            *((SPEC.name, {"cursor": f"prev:e{i}.next_cursor"}) for i in (1, 2, 3, 1)),
+        ]
+        turns = [
+            AssistantTurn(
+                finish_reason="tool_calls",
+                tool_calls=[ToolCall(id=f"c{i}", name=name, arguments=json.dumps(args))],
+            )
+            for i, (name, args) in enumerate(requests)
+        ]
+        turns.append(AssistantTurn(content="Screen complete.", finish_reason="stop"))
+        profile = ModelProfile(name="fixture", model="fixture", context_window=64_000)
+        with (
+            tempfile.TemporaryDirectory() as home,
+            patch.dict(os.environ, {"TR1_HOME": home}, clear=True),
+            patch(
+                "trading_r1.runtime.agent.provider_for",
+                return_value=SimpleNamespace(generate=AsyncMock(side_effect=turns)),
+            ),
+        ):
+            run = await run_research(
+                "Page through the BIST matches.",
+                profile=profile,
+                reader_profile=profile,
+                client=object(),
+                config=RuntimeConfig(),
+            )
+        self.assertEqual(run["termination"], "answer")
+        self.fetch.assert_awaited_once_with(
+            index=None, sector=None, recommendation=None, required={"pe", "market_cap_usd"}
+        )
+        evidence = run["evidence"]
+        pages = [record["payload"] for record in evidence]
+        self.assertEqual([p["returned"] for p in pages], [18, 18, 18, 10, 18])
+        self.assertEqual([p["returned_total"] for p in pages], [18, 36, 54, 64, 64])
+        self.assertEqual([p["unseen"] for p in pages], [46, 28, 10, 0, 0])
+        self.assertEqual({p["total_matched"] for p in pages}, {64})
+        self.assertEqual({p["capture_id"] for p in pages}, {pages[0]["capture_id"]})
+        self.assertEqual({p["captured_at"] for p in pages}, {pages[0]["captured_at"]})
+        self.assertEqual(
+            dt.datetime.fromisoformat(pages[0]["captured_at"]).utcoffset(), dt.timedelta(0)
+        )
+        self.assertEqual({record["provenance"]["view"] for record in evidence}, {"pe"})
+        self.assertTrue(all("as_of" not in record["provenance"] for record in evidence))
+        self.assertTrue(all(p["unavailable_metrics"] == ["roe"] for p in pages))
+        self.assertIn("unseen=46", evidence[0]["output"])
+        self.assertEqual(
+            [row["symbol"] for p in pages[:4] for row in p["rows"]],
+            [f"XIST:T{i:03}" for i in range(64)],
+        )
+        self.assertEqual(pages[-1]["rows"], pages[1]["rows"])
+        for p in pages[3:]:
+            self.assertIsNone(p["next_cursor"])
+            self.assertFalse(p["truncated"])
+
+    async def test_cursors_cannot_skip_pages_change_filters_or_cross_runs(self):
+        with screen_capture_scope():
+            first = (await SPEC.handler(BistScreenRequest(limit=18, pe_min=1))).payload
+            cursor = first["next_cursor"]
+            for invalid in (
+                "not-a-cursor",
+                f"{first['capture_id']}:2",
+                f"{first['capture_id']}:36",
+            ):
+                with (
+                    self.subTest(invalid=invalid),
+                    self.assertRaisesRegex(ToolError, "Unknown or expired"),
+                ):
+                    await SPEC.handler(BistScreenRequest(cursor=invalid))
+            for change in ({"pe_min": 2}, {"sort_by": "roe"}, {"limit": 1}):
+                with (
+                    self.subTest(change=change),
+                    self.assertRaisesRegex(ToolError, "filters, sort or limit changed"),
+                ):
+                    await SPEC.handler(BistScreenRequest(cursor=cursor, **change))
+            with screen_capture_scope(), self.assertRaisesRegex(ToolError, "Unknown or expired"):
+                await SPEC.handler(BistScreenRequest(cursor=cursor))
+            second = await SPEC.handler(BistScreenRequest(cursor=cursor, pe_min=1))
+            self.assertEqual(second.payload["returned_total"], 36)
+            self.assertEqual(second.payload["total_matched"], 63)
+        with self.assertRaisesRegex(ToolError, "Unknown or expired"):
+            await SPEC.handler(BistScreenRequest(cursor=cursor))
+        self.fetch.assert_awaited_once()
+
+    async def test_old_captures_expire_instead_of_refetching(self):
+        with screen_capture_scope(), patch.object(bist_screen, "_MAX_CAPTURES", 2):
+            req = BistScreenRequest(limit=18)
+            first, second, third = [(await SPEC.handler(req)).payload for _ in range(3)]
+            with self.assertRaisesRegex(ToolError, "Unknown or expired"):
+                await SPEC.handler(BistScreenRequest(cursor=first["next_cursor"]))
+            for capture in (second, third):
+                next_page = await SPEC.handler(BistScreenRequest(cursor=capture["next_cursor"]))
+                self.assertEqual(next_page.payload["capture_id"], capture["capture_id"])
+                self.assertEqual(next_page.payload["returned_total"], 36)
+        self.assertEqual(self.fetch.await_count, 3)

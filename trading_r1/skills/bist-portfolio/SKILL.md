@@ -59,7 +59,9 @@ requires_tools:
    the mandate (roughly 10x to 20x one position's USD size, e.g. $0.15m to $0.25m/day for a
    $100k sleeve; do not impose an arbitrary $1m/day floor that drops smaller compounders). Set a
    positive P/E or EV/EBITDA floor for profitable-stock screens. Do not rely only on
-   `sort_by="market_cap_usd"`, which truncates smaller names off the bottom:
+   `sort_by="market_cap_usd"`, which ranks smaller names last. Follow `next_cursor` if unseen
+   matches could change the shortlist. Distinguish matched, returned and examined names; unseen
+   matches are not rejects.
    - Run a dedicated **small/mid-cap operating-company screen** (e.g. `market_cap_usd_min=30`,
      `market_cap_usd_max=750`, positive `ev_ebitda_min`/`ev_ebitda_max`, `roe_min`, `pe_min`)
      **without** forecast-only filters (`net_margin_min`, `net_income_growth_min`,
