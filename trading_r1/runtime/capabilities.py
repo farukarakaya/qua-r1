@@ -74,7 +74,7 @@ def capabilities_catalog(
     for spec in [*registry.core_tools(), *registry.deferred_tools()]:
         family, domain = classify_tool(spec)
         entry = _tool_dict(spec, family, domain)
-        if family in FOUNDATION_FAMILIES:
+        if family in FOUNDATION_FAMILIES and spec.tier == "core":
             foundation.append(entry)
         elif domain in DOMAIN_SPECS:
             by_domain.setdefault(domain, {"tools": [], "skills": []})["tools"].append(entry)

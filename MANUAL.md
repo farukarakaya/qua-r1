@@ -214,6 +214,21 @@ read and save personal preferences in shared notes. Keep market data out of thos
 Settings > Remembered notes lets you view or delete notes, not turn memory on or off.
 Do not share licensed data in exported reports or channels. See [IstFin's terms](https://api.istfin.com/yasal/kullanim-kosullari).
 
+## Discover new equity ideas
+
+Ask Qua to use the `discovery` skill for a trend or market. For US research, supply a ticker
+list or identify a dated universe. For example: “Use discovery to look for a cyclical turn
+among these US stocks: MU, WDC, STX. Compare plausible earnings with what each price implies
+and tell me what would disprove each idea. No weights.” For BIST, start from a full-market
+screen or a narrower capture.
+
+`core.record_discovery` saves dated `watch`, `pass` and `eligible` decisions as session evidence.
+`eligible` means ready for a later portfolio review, not a buy signal. A later verdict for the
+same capture or US list updates the counts without overwriting the earlier record. Read old
+records with `evidence`. For a US list, returned means membership was supplied, not that every
+name had usable data. The records follow the session's existing PDF, IstFin and sync rules.
+They are not shared memory.
+
 ## Your data and keys
 
 - `trading-r1 secrets set` and the key forms store keys in `~/.trading-r1/credentials.json`, and

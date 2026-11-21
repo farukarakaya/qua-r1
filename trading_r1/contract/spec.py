@@ -117,10 +117,11 @@ class Provenance(BaseModel):
 
 @dataclass(frozen=True)
 class Result:
-    """A handler's return: the output and its provenance."""
+    """A handler's return: the output, its provenance, and any explicit evidence inputs."""
 
     output: Output
     provenance: Provenance = field(default_factory=Provenance)
+    inputs: tuple[str, ...] = ()
 
     @property
     def payload(self) -> dict[str, Any]:
