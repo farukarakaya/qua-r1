@@ -67,6 +67,7 @@ servers and gateways, see [Custom model endpoints](docs/custom-model-endpoints.m
 
 ```bash
 uv run trading-r1                                          # open the terminal
+uv run trading-r1 -e .env                                  # load settings from .env
 uv run trading-r1 "What's NVDA's last quarterly revenue?"  # and ask a first question
 uv run trading-r1 --mode analytical                        # start in a mode
 ```

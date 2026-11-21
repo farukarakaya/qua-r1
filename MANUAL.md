@@ -250,9 +250,21 @@ They are not shared memory.
 Keys are read from the environment, then from `~/.trading-r1/credentials.json`. Settings, channels
 and model profiles are in the same folder (`TR1_HOME` moves it).
 
+Use `uv run trading-r1 -e .env` to load a file before the terminal and its backend start.
+For a standalone backend, use `uv run trading-r1 -e .env serve`. Variables already exported
+in the shell take precedence. A backend that is already running keeps its startup environment.
+
+```dotenv
+TR1_HOME="$HOME/.qua-r1"
+QUA_MODEL=your-model-id
+OPENAI_BASE_URL=https://your-endpoint.example/v1
+```
+
 | Variable | Does |
 |---|---|
 | `TR1_PROFILE` | The model to start on |
+| `QUA_MODEL` | The `gpt` backbone model when `TR1_GPT_MODEL` is unset |
+| `OPENAI_BASE_URL` | The endpoint for `gpt` and `gpt-reader` when they have no profile-specific URL |
 | `TR1_REPORTS_DIR` | The reports folder |
 | `TR1_SKILLS_DIR` | One more folder of skills |
 | `TR1_PORT` | The backend's port |
