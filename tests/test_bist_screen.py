@@ -348,13 +348,14 @@ class BistScreenPaginationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({p["total_matched"] for p in pages}, {64})
         self.assertEqual({p["capture_id"] for p in pages}, {pages[0]["capture_id"]})
         self.assertEqual({p["captured_at"] for p in pages}, {pages[0]["captured_at"]})
-        self.assertEqual(
-            dt.datetime.fromisoformat(pages[0]["captured_at"]).utcoffset(), dt.timedelta(0)
-        )
+        captured = pages[0]["captured_at"]
+        self.assertTrue(captured.endswith("Z"))
+        self.assertEqual(dt.datetime.fromisoformat(captured).utcoffset(), dt.timedelta(0))
         self.assertEqual({record["provenance"]["view"] for record in evidence}, {"pe"})
         self.assertTrue(all("as_of" not in record["provenance"] for record in evidence))
         self.assertTrue(all(p["unavailable_metrics"] == ["roe"] for p in pages))
         self.assertIn("unseen=46", evidence[0]["output"])
+        self.assertIn(f"captured_at={captured[:10]} {captured[11:16]}Z", evidence[0]["output"])
         self.assertEqual(
             [row["symbol"] for p in pages[:4] for row in p["rows"]],
             [f"XIST:T{i:03}" for i in range(64)],

@@ -182,7 +182,7 @@ async def _capture(req: BistScreenRequest) -> _Capture:
 
     return _Capture(
         id=uuid4().hex,
-        captured_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+        captured_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         request=req.model_copy(),
         rows=[BistScreenRow(**row) for row in sorted(rows, key=sort_key)],
         unavailable_metrics=list(unavailable),
