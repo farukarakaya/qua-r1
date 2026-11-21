@@ -2,13 +2,18 @@
 
 import io
 import os
+import plistlib
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
+from dotenv import dotenv_values
+
 from trading_r1.cli import main
+from trading_r1.host import daemon
 from trading_r1.providers import get_profile, load_profiles
 from trading_r1.state.paths import state_dir
 
@@ -44,6 +49,38 @@ class TestEnvFile(unittest.TestCase):
             self.assertEqual(get_profile("gpt-reader").base_url, profile.base_url)
         launch.assert_called_once()
         self.assertEqual(result.exception.code, 0)
+
+    def test_installed_daemon_uses_foreground_gpt_configuration(self):
+        env = {
+            "TR1_HOME": str(self.directory),
+            "OPENAI_API_KEY": "fixture-key",
+            "OPENAI_BASE_URL": "https://gateway.example/v1",
+            "QUA_MODEL": "fixture-model",
+        }
+        for manager in (daemon.SystemdUser(self.directory), daemon.Launchd(self.directory)):
+            with (
+                self.subTest(manager=type(manager).__name__),
+                patch.dict(os.environ, env, clear=True),
+            ):
+                foreground = get_profile("gpt")
+                daemon.install(
+                    manager,
+                    "trading-r1",
+                    8765,
+                    env,
+                    run=lambda cmd: subprocess.CompletedProcess(cmd, 0),
+                )
+                if manager.writes_env_file:
+                    installed = dotenv_values(self.directory / daemon.ENV_FILE)
+                else:
+                    installed = plistlib.loads(manager.unit_path.read_bytes())[
+                        "EnvironmentVariables"
+                    ]
+                with patch.dict(os.environ, installed, clear=True):
+                    profile = get_profile("gpt")
+                    self.assertEqual(profile.base_url, foreground.base_url)
+                    self.assertEqual(profile.model, foreground.model)
+                    self.assertEqual(profile.resolve_api_key(), env["OPENAI_API_KEY"])
 
     def test_missing_file_fails_before_launch(self):
         stderr = io.StringIO()
