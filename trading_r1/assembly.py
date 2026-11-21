@@ -95,7 +95,7 @@ def build_run_registry(
     policy: RunPolicy = RunPolicy.INTERACTIVE,
 ) -> ToolRegistry:
     """The registry the model sees in one run: a clone of ``base`` plus the per-run tools bound to
-    this run's state: evidence (reading back recorded results), the
+    this run's state: evidence (reading back recorded results), discovery verdicts, the
     sensitivity sweep (when there are compute tools; it dispatches within this registry),
     load_tool (when there are deferred tools), load_skill (when there are skills), ask_user
     (mid-run clarification, in the terminal only) and remember/forget (when ``memory`` is given,
@@ -105,6 +105,7 @@ def build_run_registry(
     from trading_r1.tools.compute.modeling.sensitivity import build_sensitivity_spec
     from trading_r1.tools.core import (
         build_ask_user_spec,
+        build_discovery_spec,
         build_evidence_spec,
         build_load_skill_spec,
         build_load_tool_spec,
@@ -113,6 +114,7 @@ def build_run_registry(
 
     registry = base.clone()
     registry.register(build_evidence_spec(session_state.evidence))
+    registry.register(build_discovery_spec(session_state.evidence))
     if any(s.result_kind == "compute" for s in registry.deferred_tools()):
         registry.register(build_sensitivity_spec(session_state, registry))
     if registry.deferred_tools():

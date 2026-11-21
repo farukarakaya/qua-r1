@@ -154,6 +154,12 @@ are not confirmed earnings release dates. The Tauric equity tools direct qualifi
 requests to the BIST tools instead of querying Tauric.
 
 Use `data.market.bist_screen` to rank the full BIST screening universe (or specify an index).
+Pass a non-null `next_cursor` as `cursor` within the same research turn to read the next unseen
+page from that capture. The filters, sort and page size stay fixed. `returned_total` counts
+unique rows already returned; `unseen` counts remaining matches, not rejected companies.
+`captured_at` is when Qua captured the result, not the upstream data date. A cursor can expire
+after newer captures or when the turn ends. To start a new screen, omit the cursor.
+
 Market cap and 3-month average volume are in USD millions. Net margin and net income growth
 are forecasts, so verify them before relying on them. A failed filter or sort metric fails the
 screen. Failed display-only requests are listed under `unavailable_metrics`.
@@ -207,6 +213,21 @@ reads; the session is logged locally but is not synced to Tauric. Like other cha
 read and save personal preferences in shared notes. Keep market data out of those notes.
 Settings > Remembered notes lets you view or delete notes, not turn memory on or off.
 Do not share licensed data in exported reports or channels. See [IstFin's terms](https://api.istfin.com/yasal/kullanim-kosullari).
+
+## Discover new equity ideas
+
+Ask Qua to use the `discovery` skill for a trend or market. For US research, supply a ticker
+list or identify a dated universe. For example: “Use discovery to look for a cyclical turn
+among these US stocks: MU, WDC, STX. Compare plausible earnings with what each price implies
+and tell me what would disprove each idea. No weights.” For BIST, start from a full-market
+screen or a narrower capture.
+
+`core.record_discovery` saves dated `watch`, `pass` and `eligible` decisions as session evidence.
+`eligible` means ready for a later portfolio review, not a buy signal. A later verdict for the
+same capture or US list updates the counts without overwriting the earlier record. Read old
+records with `evidence`. For a US list, returned means membership was supplied, not that every
+name had usable data. The records follow the session's existing PDF, IstFin and sync rules.
+They are not shared memory.
 
 ## Your data and keys
 

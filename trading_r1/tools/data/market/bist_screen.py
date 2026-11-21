@@ -5,12 +5,19 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Annotated, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, model_validator
 
-from trading_r1.contract.spec import Output, Provenance, Result, ToolSpec, hint
-from trading_r1.contract.units import Code, Count, Multiple, Number, Percent, Text
+from trading_r1.contract.spec import Output, Provenance, Result, ToolError, ToolSpec, hint
+from trading_r1.contract.units import Code, Count, Day, Multiple, Number, Percent, Text
 from trading_r1.tools.data import bist
 
 _FilterLabel = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
@@ -27,6 +34,9 @@ _SortMetric = Literal[
     "upside_potential",
 ]
 _LOWEST_FIRST = {"pe", "pb", "ev_ebitda"}
+_MAX_CAPTURES = 8
+_CURSOR = re.compile(r"([0-9a-f]{32}):([1-9][0-9]{0,9})")
+_STALE_CURSOR = "Unknown or expired BIST screen cursor. Start a new screen without a cursor."
 
 
 class BistScreenRequest(BaseModel):
@@ -71,6 +81,9 @@ class BistScreenRequest(BaseModel):
         ),
     )
     limit: int = Field(25, ge=1, le=50)
+    cursor: str | None = Field(
+        None, max_length=64, description="Use a non-null next_cursor from this turn on its own."
+    )
 
     @model_validator(mode="after")
     def ordered_bounds(self):
@@ -82,6 +95,8 @@ class BistScreenRequest(BaseModel):
 
 
 class BistScreenRow(Output):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     symbol: Code
     name: Code
     sector: Code = None
@@ -98,8 +113,14 @@ class BistScreenRow(Output):
 
 
 class BistScreenOutput(Output):
+    capture_id: Code
+    captured_at: Day = Field(description="UTC capture time, not an upstream market data date.")
     total_matched: Count
-    truncated: bool
+    returned: Count = Field(description="Rows on this page.")
+    returned_total: Count = Field(description="Distinct rows returned so far for this capture.")
+    unseen: Count = Field(description="Matched rows not returned yet.")
+    truncated: bool = Field(description="Whether matched rows remain unseen.")
+    next_cursor: Code = None
     rows: Annotated[list[BistScreenRow], hint(rows=50)]
     unavailable_metrics: list[Code] = Field(
         default_factory=list, description="Display-only metrics whose upstream requests failed."
@@ -107,9 +128,33 @@ class BistScreenOutput(Output):
     note: Text
 
 
-async def _screen(req: BistScreenRequest) -> Result:
+@dataclass
+class _Capture:
+    id: str
+    captured_at: str
+    request: BistScreenRequest
+    rows: list[BistScreenRow]
+    unavailable_metrics: list[str]
+    returned_total: int = 0
+
+
+_captures: ContextVar[dict[str, _Capture] | None] = ContextVar("bist_screen_captures", default=None)
+
+
+@contextmanager
+def screen_capture_scope() -> Iterator[None]:
+    """Keep a bounded set of screen captures for one research turn."""
+    token = _captures.set({})
+    try:
+        yield
+    finally:
+        _captures.reset(token)
+
+
+async def _capture(req: BistScreenRequest) -> _Capture:
     filters = req.model_dump(
-        exclude={"index", "sector", "recommendation", "sort_by", "limit"}, exclude_none=True
+        exclude={"index", "sector", "recommendation", "sort_by", "limit", "cursor"},
+        exclude_none=True,
     )
     rows, unavailable = await bist.screen_stocks(
         index=req.index,
@@ -135,13 +180,66 @@ async def _screen(req: BistScreenRequest) -> Result:
             return 1, 0, row["symbol"]
         return 0, value if multiple else -value, row["symbol"]
 
-    rows.sort(key=sort_key)
+    return _Capture(
+        id=uuid4().hex,
+        captured_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        request=req.model_copy(),
+        rows=[BistScreenRow(**row) for row in sorted(rows, key=sort_key)],
+        unavailable_metrics=list(unavailable),
+    )
+
+
+def _resume(req: BistScreenRequest, captures: dict[str, _Capture]) -> tuple[_Capture, int]:
+    match = _CURSOR.fullmatch(req.cursor or "")
+    if not match or (capture := captures.get(match[1])) is None:
+        raise ToolError(_STALE_CURSOR)
+    start = int(match[2])
+    original = capture.request
+    # Only page starts already issued by this capture are valid. No jumping ahead.
+    if start > capture.returned_total or start >= len(capture.rows) or start % original.limit:
+        raise ToolError(_STALE_CURSOR)
+    if any(
+        getattr(req, key) != getattr(original, key) for key in req.model_fields_set - {"cursor"}
+    ):
+        raise ToolError(
+            "BIST screen filters, sort or limit changed. Pass only the cursor to continue."
+        )
+    return capture, start
+
+
+async def _screen(req: BistScreenRequest) -> Result:
+    captures = _captures.get()
+    if req.cursor is not None:
+        if captures is None:
+            raise ToolError(_STALE_CURSOR)
+        capture, start = _resume(req, captures)
+    else:
+        capture, start = await _capture(req), 0
+        if captures is not None and len(capture.rows) > req.limit:
+            if len(captures) >= _MAX_CAPTURES:
+                del captures[next(iter(captures))]
+            captures[capture.id] = capture
+
+    original = capture.request
+    rows = capture.rows[start : start + original.limit]
+    capture.returned_total = max(capture.returned_total, start + len(rows))
+    unseen = len(capture.rows) - capture.returned_total
     return Result(
         BistScreenOutput(
-            total_matched=len(rows),
-            truncated=len(rows) > req.limit,
-            rows=[BistScreenRow(**row) for row in rows[: req.limit]],
-            unavailable_metrics=unavailable,
+            capture_id=capture.id,
+            captured_at=capture.captured_at,
+            total_matched=len(capture.rows),
+            returned=len(rows),
+            returned_total=capture.returned_total,
+            unseen=unseen,
+            truncated=unseen > 0,
+            next_cursor=(
+                f"{capture.id}:{capture.returned_total}"
+                if unseen and captures is not None
+                else None
+            ),
+            rows=rows,
+            unavailable_metrics=capture.unavailable_metrics,
             note=(
                 "Market cap and 3-month average volume are in USD millions. Dividend yield is "
                 "for the reported year. Net margin and net income growth are forecasts. "
@@ -150,7 +248,9 @@ async def _screen(req: BistScreenRequest) -> Result:
                 "inflation-adjusted companies."
             ),
         ),
-        Provenance(source=bist.SCREEN_SOURCE, subject=req.index or "Full BIST", view=req.sort_by),
+        Provenance(
+            source=bist.SCREEN_SOURCE, subject=original.index or "Full BIST", view=original.sort_by
+        ),
     )
 
 
@@ -164,8 +264,9 @@ SPEC = ToolSpec(
         "and liquidity, valuation, profitability, dividends and analyst upside. Omit index to "
         "screen all stocks. Filters exclude missing measurements; omit forecast-only fields "
         "(net_margin, net_income_growth, upside_potential) when screening uncovered small-caps. "
-        "Sort then limit the results. Verify leads with company filings and corporate actions "
-        "before investing."
+        "In the same turn, pass a non-null next_cursor as cursor to continue the ranking, "
+        "without changing filters, sort or limit. Unseen rows are not rejected companies. "
+        "Verify leads with company filings and corporate actions before investing."
     ),
     request_schema=BistScreenRequest,
     handler=_screen,
