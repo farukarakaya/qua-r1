@@ -189,6 +189,10 @@ def load_profiles(
         env_key = name.upper().replace("-", "_")
         base_override = e.get(f"TR1_{env_key}_BASE_URL")
         model_override = e.get(f"TR1_{env_key}_MODEL")
+        if name in ("gpt", "gpt-reader") and not spec.get("base_url"):
+            base_override = base_override or e.get("OPENAI_BASE_URL")
+        if name == "gpt":
+            model_override = model_override or e.get("QUA_MODEL")
         provider = LOCAL_READERS.get(name)
         key_override = e.get(f"TR1_{env_key}_API_KEY")
         if provider and spec == _BUILTIN_PROFILES.get(name):

@@ -4,6 +4,7 @@
 """`trading-r1`: launches the Trading-R1 terminal.
 
 trading-r1                       # the TUI (backend + UI)
+trading-r1 -e .env               # load environment variables before startup
 trading-r1 "NVDA DCF value?"     # the TUI, seeded with a first question
 trading-r1 --profile vllm        # the TUI on a given backbone (/model switches later)
 trading-r1 serve                 # the HTTP+SSE backend alone (development)
@@ -21,7 +22,9 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
-import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from trading_r1 import __version__
 from trading_r1.providers import ProfileSelectionError, available_backbones
@@ -55,6 +58,7 @@ files, under ~/.trading-r1 (TR1_HOME moves it):
 environment:
   TR1_PROFILE, TR1_REPORTS_DIR, TR1_PORT, TR1_LOG_LEVEL, TR1_LOG_FILE, TR1_SKILLS_DIR
   TR1_<NAME>_BASE_URL, TR1_<NAME>_MODEL for a model, for example TR1_VLLM_BASE_URL
+  QUA_MODEL, OPENAI_BASE_URL for the OpenAI profile
   TR1_VLLM_READER_BASE_URL, the page reader, if on another server
 
 Without --profile or a saved choice, the model is the first set up: an OpenAI, Anthropic, Gemini or
@@ -62,17 +66,38 @@ Tauric key, then a vLLM server (TR1_VLLM_BASE_URL) or an Ollama (TR1_OLLAMA_MODE
 TR1_OLLAMA_BASE_URL)."""
 
 
+def _load_env_file(parser: argparse.ArgumentParser, path: Path | None) -> None:
+    if path is None:
+        return
+    existing_home = "TR1_HOME" in os.environ
+    try:
+        with path.expanduser().open(encoding="utf-8-sig") as stream:
+            load_dotenv(stream=stream, override=False)
+    except (OSError, ValueError):
+        parser.error(f"cannot read environment file {str(path)!r}")
+    if not existing_home and (home := os.environ.get("TR1_HOME")):
+        # dotenv expands ${HOME}. Also accept $HOME and resolve paths before the TUI changes cwd.
+        os.environ["TR1_HOME"] = str(Path(os.path.expandvars(home)).expanduser().resolve())
+
+
 def main() -> None:
     """Entry point: the TUI by default; a subcommand's name runs that module's ``main``."""
-    if sys.argv[1:2] and sys.argv[1] in _SUBCOMMANDS:
-        module = importlib.import_module(_SUBCOMMANDS[sys.argv[1]])
-        raise SystemExit(module.main(sys.argv[2:]))
+    env_parser = argparse.ArgumentParser(prog="trading-r1", add_help=False, allow_abbrev=False)
+    env_parser.add_argument(
+        "-e", "--env-file", type=Path, metavar="FILE", help="load environment variables from FILE"
+    )
+    env_args, argv = env_parser.parse_known_args()
+    if argv and argv[0] in _SUBCOMMANDS:
+        _load_env_file(env_parser, env_args.env_file)
+        module = importlib.import_module(_SUBCOMMANDS[argv[0]])
+        raise SystemExit(module.main(argv[1:]))
 
     ap = argparse.ArgumentParser(
         prog="trading-r1",
         description="Trading-R1 terminal",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="also: trading-r1 " + " | ".join(_SUBCOMMANDS) + " (each takes --help)\n\n" + _FILES,
+        parents=[env_parser],
     )
     ap.add_argument("--version", action="version", version=f"trading-r1 {__version__}")
     ap.add_argument("question", nargs="?", help="a first question to ask")
@@ -90,6 +115,7 @@ def main() -> None:
         "default: the saved Model… choice, else the first with its key set.",
     )
     args = ap.parse_args()
+    _load_env_file(ap, args.env_file)
     try:
         backbones = [b["name"] for b in available_backbones()]
     except ProfileSelectionError as err:

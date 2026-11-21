@@ -49,8 +49,8 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 
 def copied_environment(env: Mapping[str, str]) -> dict[str, str]:
     """The variables of ``env`` the daemon is given, in name order."""
-    keys = model_key_names() | _DATA_KEYS
-    return {k: env[k] for k in sorted(env) if (k in keys or _COPIED.match(k)) and env[k]}
+    names = model_key_names() | _DATA_KEYS | {"OPENAI_BASE_URL", "QUA_MODEL"}
+    return {k: env[k] for k in sorted(env) if (k in names or _COPIED.match(k)) and env[k]}
 
 
 def _is_key(name: str) -> bool:
