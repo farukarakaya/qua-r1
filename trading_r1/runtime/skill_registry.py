@@ -11,6 +11,7 @@ auto-loads the skill's `requires_tools`.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,7 @@ class SkillSpec:
     name: str
     description: str
     body: str
+    sha256: str
     tags: tuple[str, ...] = field(default_factory=tuple)
     requires_tools: tuple[str, ...] = field(default_factory=tuple)
     domain: str = ""  # subject domain (taxonomy): groups the skill with its tools
@@ -43,15 +45,17 @@ class SkillSpec:
 
 
 def parse_skill_md(text: str, *, source_path: str | None = None) -> SkillSpec:
-    """Parse one SKILL.md document into a validated :class:`SkillSpec`."""
+    """Parse one SKILL.md document and fingerprint its full source, not just the recipe."""
 
-    fm, body = fm_lib.split_frontmatter(text, source=source_path)
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    fm, body = fm_lib.split_frontmatter(normalized, source=source_path)
     name, description = fm_lib.named_fields(fm, _ALLOWED_KEYS, "skill")
     domain = fm.get("domain")
     return SkillSpec(
         name=name,
         description=description,
         body=body,
+        sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         tags=fm_lib.as_str_list(fm, "tags"),
         requires_tools=fm_lib.as_str_list(fm, "requires_tools"),
         domain=domain if isinstance(domain, str) else "",
@@ -65,7 +69,7 @@ def load_skill_dir(skill_dir: Path) -> SkillSpec:
     md = skill_dir / "SKILL.md"
     if not md.is_file():
         raise FileNotFoundError(f"SKILL.md not found in {skill_dir}")
-    spec = parse_skill_md(md.read_text(encoding="utf-8"), source_path=str(md))
+    spec = parse_skill_md(md.read_bytes().decode("utf-8"), source_path=str(md))
     if spec.name != skill_dir.name:
         raise fm_lib.FrontmatterError(f"skill name {spec.name!r} != directory {skill_dir.name!r}")
     return spec

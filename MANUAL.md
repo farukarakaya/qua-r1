@@ -214,7 +214,9 @@ Do not share licensed data in exported reports or channels. See [IstFin's terms]
   `trading-r1 daemon install` copies supported keys (including `EVDS_API_KEY`) from the shell
   to that store; non-secret settings go in `~/.trading-r1/daemon.env`. Only you can read these
   files, but your own processes and any backup tool that copies the folder can too.
-- Sessions, notes and settings are plain files under `~/.trading-r1/`.
+- Sessions, notes and settings are plain files under `~/.trading-r1/`. Each research turn records
+  the backend's Git revision and whether its checkout had changes at startup, when known. Loaded
+  skills include a SHA-256 hash of the full recipe file, including its required tools.
 - The backend listens on `127.0.0.1` by default, and every route but its liveness check needs a
   bearer token, kept in a file only you can read. Do not expose it to a network you do not trust.
 - The agent can read web pages and call the data API on your behalf, and sends what it reads to
