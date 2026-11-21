@@ -77,8 +77,6 @@ import { runQuestionnaire } from "./ui/questionnaire"
 
 type View = "welcome" | "research"
 
-// Reserved by the backend for sessions that can read PDFs and are not synced.
-const DOCUMENT_SESSION_PREFIX = "docs-"
 const ISTFIN_SESSION_PREFIX = "istfin-"
 const PDFS_OFF: SessionPdfs = { pdfs_enabled: false, pdfs_private: false }
 
@@ -238,36 +236,14 @@ function AppInner() {
     if (seed) void ask(seed) // run the seed now that a backbone is selected (or the server defaults)
   }
 
-  function newResearch(prefix?: string) {
+  function newResearch() {
     if (running()) return
     setTurns([])
     inputHistory.load([]) // input recall is per-session: a new session starts empty
-    setSessionId(prefix ? `${prefix}${crypto.randomUUID()}` : undefined)
-    setPdfs(prefix === DOCUMENT_SESSION_PREFIX ? { pdfs_enabled: true, pdfs_private: true } : PDFS_OFF)
+    setSessionId(undefined)
+    setPdfs(PDFS_OFF)
     setView("welcome")
     void refreshUsage()
-  }
-
-  function newDocumentResearch() {
-    dialog.show(() => (
-      <ListDialog
-        title="New session with PDFs"
-        options={[
-          { name: "Cancel", description: "Keep the current session", value: "cancel" },
-          {
-            name: "Use imported reports",
-            description: "Search reports and share selected results with the model. No session sync.",
-            value: "enable",
-          },
-        ]}
-        width={layout.width.lg}
-        onCancel={() => dialog.close()}
-        onSelect={(choice) => {
-          dialog.close()
-          if (choice === "enable") newResearch(DOCUMENT_SESSION_PREFIX)
-        }}
-      />
-    ))
   }
 
   async function choosePdfAccess() {
@@ -614,7 +590,6 @@ function AppInner() {
     const groups = buildCommandGroups(
       {
         newSession: newResearch,
-        newDocumentSession: newDocumentResearch,
         choosePdfAccess,
         resumeSession: chooseSession,
         compactContext: runCompact,
