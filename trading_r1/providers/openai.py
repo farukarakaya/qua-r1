@@ -206,14 +206,19 @@ class OpenAIProvider(Provider):
         on_delta: DeltaCallback | None = None,
     ) -> AssistantTurn:
         cl = self.client or client_for(self.profile)
+        effort = self.profile.reasoning_effort or "high"
+        reasoning: dict[str, Any] = {"effort": effort}
+        if effort != "none":
+            reasoning["summary"] = "detailed"
         kwargs: dict[str, Any] = {
             "model": self.profile.model,
             "input": _to_input(self.profile, messages),
-            "reasoning": {"effort": "high", "summary": "detailed"},
-            "include": _INCLUDE,
+            "reasoning": reasoning,
             "store": False,
             "max_output_tokens": max_tokens,
         }
+        if effort != "none":
+            kwargs["include"] = _INCLUDE
         responses_tools = _to_tools(tools)
         if responses_tools:
             kwargs["tools"] = responses_tools

@@ -96,8 +96,11 @@ def build_create_kwargs(
         # endpoint that rejects it)
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
-    if profile.extra_body:
-        kwargs["extra_body"] = dict(profile.extra_body)
+    extra_body = dict(profile.extra_body) if profile.extra_body else {}
+    if profile.reasoning_effort is not None:
+        extra_body["reasoning_effort"] = profile.reasoning_effort
+    if extra_body:
+        kwargs["extra_body"] = extra_body
     return apply_adapter(profile.adapter, kwargs)
 
 

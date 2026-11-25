@@ -21,7 +21,7 @@ If the terminal attaches to a separately running backend, that backend must also
 
 - The research agent needs Chat Completions with streaming and function tool calls. The web reader needs structured output using `response_format` with JSON Schema. The example uses the same profile for both; set `reader_profile` to another configured profile if the gateway cannot do structured output.
 - A successful model readiness check does not confirm tool calling or structured output. To verify both, try a research question that requires a tool call and reading a web page.
-- `TR1_MY_GATEWAY_BASE_URL`, `TR1_MY_GATEWAY_MODEL`, and `TR1_MY_GATEWAY_API_KEY` override the example profile's file settings for the process. Profile names are uppercased and hyphens become underscores.
+- `TR1_MY_GATEWAY_BASE_URL`, `TR1_MY_GATEWAY_MODEL`, `TR1_MY_GATEWAY_API_KEY`, and `TR1_MY_GATEWAY_REASONING_EFFORT` override the example profile's file settings for the process. Profile names are uppercased and hyphens become underscores.
 - The configured gateway receives the prompts and tool results used in model requests. Only send data you are allowed to share with it.
 
 ## PDF OCR uses a separate endpoint

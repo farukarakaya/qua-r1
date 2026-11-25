@@ -57,8 +57,8 @@ files, under ~/.trading-r1 (TR1_HOME moves it):
 
 environment:
   TR1_PROFILE, TR1_REPORTS_DIR, TR1_PORT, TR1_LOG_LEVEL, TR1_LOG_FILE, TR1_SKILLS_DIR
-  TR1_<NAME>_BASE_URL, TR1_<NAME>_MODEL for a model, for example TR1_VLLM_BASE_URL
-  QUA_MODEL, OPENAI_BASE_URL for the OpenAI profile
+  TR1_<NAME>_BASE_URL, TR1_<NAME>_MODEL, TR1_<NAME>_REASONING_EFFORT for a model
+  QUA_MODEL, QUA_REASONING_EFFORT, OPENAI_BASE_URL for the OpenAI profile
   TR1_VLLM_READER_BASE_URL, the page reader, if on another server
 
 Without --profile or a saved choice, the model is the first set up: an OpenAI, Anthropic, Gemini or
