@@ -35,6 +35,8 @@ from trading_r1.state import credentials
 from trading_r1.state.paths import state_dir
 from trading_r1.state.settings import persisted_backbone
 
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+
 
 class Generation(BaseModel):
     """Sampling defaults for a profile. The output budget is the runtime's
@@ -82,6 +84,7 @@ class ModelProfile(BaseModel):
     # the runtime's default.
     context_window: int | None = None
     generation: Generation = Field(default_factory=Generation)
+    reasoning_effort: ReasoningEffort | None = None
     extra_body: dict[str, Any] = Field(default_factory=dict)
     adapter: str | None = None  # quirk-adapter name (see providers/adapters)
     # The wire protocol the loop uses (providers/base.Provider): "chat" =
@@ -181,18 +184,23 @@ def load_profiles(
     profiles: dict[str, ModelProfile] = {}
     for name, spec in raw.items():
         # Per-profile env overrides, NAME upper-cased with - as _:
-        #   TR1_<NAME>_BASE_URL  point a profile at a different endpoint (remote/alt port)
-        #   TR1_<NAME>_MODEL     serve a different model (e.g. TR1_OLLAMA_MODEL=llama3.2)
-        #   TR1_<NAME>_API_KEY   the credential a self-served endpoint expects (a vLLM
-        #                         started with an --api-key / VLLM_API_KEY); keyless stays
-        #                         the default, so an unset var keeps the profile's literal
+        #   TR1_<NAME>_BASE_URL          point a profile at a different endpoint (remote/alt port)
+        #   TR1_<NAME>_MODEL             serve a different model (e.g. TR1_OLLAMA_MODEL=llama3.2)
+        #   TR1_<NAME>_API_KEY           the credential a self-served endpoint expects (a vLLM
+        #                                started with an --api-key / VLLM_API_KEY); keyless stays
+        #                                the default, so an unset var keeps the profile's literal
+        #   TR1_<NAME>_REASONING_EFFORT  reasoning effort level (none..xhigh)
         env_key = name.upper().replace("-", "_")
         base_override = e.get(f"TR1_{env_key}_BASE_URL")
         model_override = e.get(f"TR1_{env_key}_MODEL")
+        effort_override = (e.get(f"TR1_{env_key}_REASONING_EFFORT") or "").strip().lower() or None
         if name in ("gpt", "gpt-reader") and not spec.get("base_url"):
             base_override = base_override or e.get("OPENAI_BASE_URL")
         if name == "gpt":
             model_override = model_override or e.get("QUA_MODEL")
+            effort_override = (
+                effort_override or (e.get("QUA_REASONING_EFFORT") or "").strip().lower() or None
+            )
         provider = LOCAL_READERS.get(name)
         key_override = e.get(f"TR1_{env_key}_API_KEY")
         if provider and spec == _BUILTIN_PROFILES.get(name):
@@ -208,6 +216,8 @@ def load_profiles(
             spec = {**spec, "model": model_override}
         if key_override:
             spec = {**spec, "api_key_literal": key_override}
+        if effort_override:
+            spec = {**spec, "reasoning_effort": effort_override}
         if not spec.get("base_url") and not spec.get("api_key_env"):
             spec = {**spec, "api_key_env": "OPENAI_API_KEY"}  # no address: it is OpenAI's own
         try:

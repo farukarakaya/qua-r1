@@ -29,6 +29,7 @@ class TestEnvFile(unittest.TestCase):
         self.env_file.write_text(
             f'TR1_HOME="$HOME/{os.path.relpath(home, shell_home)}"\n'
             "QUA_MODEL=fixture-model\n"
+            "QUA_REASONING_EFFORT=medium\n"
             "OPENAI_BASE_URL=https://gateway.example/v1\n"
             "OPENAI_API_KEY=file-key\n"
         )
@@ -44,9 +45,13 @@ class TestEnvFile(unittest.TestCase):
             self.assertEqual(state_dir(), home)
             profile = get_profile()
             self.assertEqual(profile.model, "fixture-model")
+            self.assertEqual(profile.reasoning_effort, "medium")
             self.assertEqual(profile.base_url, "https://gateway.example/v1")
             self.assertEqual(profile.resolve_api_key(), "shell-key")
-            self.assertEqual(get_profile("gpt-reader").base_url, profile.base_url)
+            reader = get_profile("gpt-reader")
+            self.assertEqual(reader.base_url, profile.base_url)
+            self.assertIsNone(reader.reasoning_effort)
+            self.assertIsNone(get_profile("gpt-ocr").reasoning_effort)
         launch.assert_called_once()
         self.assertEqual(result.exception.code, 0)
 
@@ -56,6 +61,7 @@ class TestEnvFile(unittest.TestCase):
             "OPENAI_API_KEY": "fixture-key",
             "OPENAI_BASE_URL": "https://gateway.example/v1",
             "QUA_MODEL": "fixture-model",
+            "QUA_REASONING_EFFORT": "low",
         }
         for manager in (daemon.SystemdUser(self.directory), daemon.Launchd(self.directory)):
             with (
@@ -80,6 +86,7 @@ class TestEnvFile(unittest.TestCase):
                     profile = get_profile("gpt")
                     self.assertEqual(profile.base_url, foreground.base_url)
                     self.assertEqual(profile.model, foreground.model)
+                    self.assertEqual(profile.reasoning_effort, foreground.reasoning_effort)
                     self.assertEqual(profile.resolve_api_key(), env["OPENAI_API_KEY"])
 
     def test_missing_file_fails_before_launch(self):
@@ -102,12 +109,18 @@ class TestEnvFile(unittest.TestCase):
             path=providers,
             env={
                 "QUA_MODEL": "fixture-model",
+                "QUA_REASONING_EFFORT": "low",
                 "OPENAI_BASE_URL": "https://gateway.example/v1",
                 "TR1_GPT_MODEL": "main-model",
                 "TR1_GPT_BASE_URL": "https://main.example/v1",
+                "TR1_GPT_REASONING_EFFORT": " Medium ",
+                "TR1_GPT_READER_REASONING_EFFORT": "none",
             },
         )
         self.assertEqual(profiles["gpt"].model, "main-model")
         self.assertEqual(profiles["gpt"].base_url, "https://main.example/v1")
+        self.assertEqual(profiles["gpt"].reasoning_effort, "medium")
         self.assertEqual(profiles["gpt-reader"].base_url, "https://reader.example/v1")
+        self.assertEqual(profiles["gpt-reader"].reasoning_effort, "none")
         self.assertEqual(profiles["gpt-ocr"].base_url, "https://api.openai.com/v1")
+        self.assertIsNone(profiles["gpt-ocr"].reasoning_effort)

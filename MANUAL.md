@@ -257,6 +257,7 @@ in the shell take precedence. A backend that is already running keeps its startu
 ```dotenv
 TR1_HOME="$HOME/.qua-r1"
 QUA_MODEL=your-model-id
+QUA_REASONING_EFFORT=medium
 OPENAI_BASE_URL=https://your-endpoint.example/v1
 ```
 
@@ -264,12 +265,13 @@ OPENAI_BASE_URL=https://your-endpoint.example/v1
 |---|---|
 | `TR1_PROFILE` | The model to start on |
 | `QUA_MODEL` | The `gpt` backbone model when `TR1_GPT_MODEL` is unset |
+| `QUA_REASONING_EFFORT` | Reasoning effort for the `gpt` backbone (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) when `TR1_GPT_REASONING_EFFORT` is unset |
 | `OPENAI_BASE_URL` | The endpoint for `gpt` and `gpt-reader` when they have no profile-specific URL |
 | `TR1_REPORTS_DIR` | The reports folder |
 | `TR1_SKILLS_DIR` | One more folder of skills |
 | `TR1_PORT` | The backend's port |
 | `TR1_VLLM_BASE_URL` | Your vLLM server's address, such as `http://gpu-box:8000/v1` |
-| `TR1_<NAME>_BASE_URL`, `TR1_<NAME>_MODEL`, `TR1_<NAME>_API_KEY` | One model's address, model and key |
+| `TR1_<NAME>_BASE_URL`, `TR1_<NAME>_MODEL`, `TR1_<NAME>_API_KEY`, `TR1_<NAME>_REASONING_EFFORT` | One model's address, model, key and reasoning effort |
 
 To add a model, give it a profile in `~/.trading-r1/providers.json`:
 

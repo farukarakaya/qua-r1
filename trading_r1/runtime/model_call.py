@@ -304,13 +304,16 @@ class ModelCaller:
 def _settings(profile: ModelProfile, max_tokens: int, **extra: Any) -> dict[str, Any]:
     """The generation settings of a request, as recorded."""
     gen = profile.generation
-    return {
+    out = {
         "max_tokens": max_tokens,
         "temperature": gen.temperature,
         "top_p": gen.top_p,
         "presence_penalty": gen.presence_penalty,
         **extra,
     }
+    if profile.reasoning_effort is not None:
+        out["reasoning_effort"] = profile.reasoning_effort
+    return out
 
 
 def output_budget(profile: ModelProfile, config: RuntimeConfig, tokens: int | None = None) -> int:
